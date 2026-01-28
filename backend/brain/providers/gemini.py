@@ -13,7 +13,7 @@ from .provider_registry import get_provider_registry
 
 try:
     from google import genai
-    from google.genai.types import GenerateContentConfig
+    from google.genai.types import GenerateContentConfig, Content, Part
     GEMINI_AVAILABLE = True
 except ImportError:
     logger.warning("Google Genai library not available. Install with: pip install google-genai")
@@ -74,36 +74,74 @@ class GeminiProvider:
             raise RuntimeError("Provider not initialized")
         
         try:
-            # Get last user message
-            user_message = next(
-                (msg["content"] for msg in reversed(messages) if msg.get("role") == "user"),
-                None
-            )
+            model = self.config.get("model", "gemini-1.5-flash")
             
-            if not user_message:
-                return self._error_response("No user message found")
+            # Extract system instruction and format history
+            system_instruction = None
+            contents = []
+            
+            for msg in messages:
+                role = msg.get("role")
+                content = msg.get("content", "")
+                
+                if role == "system":
+                    # Concatenate multiple system prompts if present
+                    if system_instruction:
+                        system_instruction += "\n" + content
+                    else:
+                        system_instruction = content
+                elif role == "user":
+                    contents.append(Content(role="user", parts=[Part.from_text(text=content)]))
+                elif role == "assistant":
+                    contents.append(Content(role="model", parts=[Part.from_text(text=content)]))
+            
+            if not contents:
+                return self._error_response("No conversation history found")
             
             # Build generation config
-            gen_config = self._build_request_params(kwargs)
-            model = self.config.get("model", "gemini-1.5-flash")
+            gen_config_dict = self._build_request_params(kwargs)
+            if system_instruction:
+                gen_config_dict["system_instruction"] = system_instruction
+
+            # Convert dict to proper Config object if needed, or pass as kwargs depending on SDK version
+            # The google-genai SDK v0.1+ usually takes config object
+            # We'll pass specific args to the generate_content calls
+            
+            gen_config = GenerateContentConfig(**gen_config_dict)
             
             # Make Gemini API call
             try:
                 response = await self.client.aio.models.generate_content(
                     model=model,
-                    contents=user_message,
-                    config=GenerateContentConfig(**gen_config)
+                    contents=contents,
+                    config=gen_config
                 )
+                
+                # Handle response
                 content = response.text if hasattr(response, 'text') else ""
+                
+                # Extract usage if available (depends on SDK version structure)
+                usage = {}
+                if hasattr(response, 'usage_metadata'):
+                    usage = {
+                        "prompt_tokens": response.usage_metadata.prompt_token_count,
+                        "completion_tokens": response.usage_metadata.candidates_token_count,
+                        "total_tokens": response.usage_metadata.total_token_count
+                    }
+                
             except Exception as api_error:
                 logger.error(f"Gemini API call failed: {api_error}")
+                # Log detailed error for debugging
+                if hasattr(api_error, 'response'):
+                    logger.error(f"API Response: {api_error.response}")
                 raise
             
             return {
                 "content": content,
                 "metadata": {
                     "model": model,
-                    "provider": "gemini"
+                    "provider": "gemini",
+                    "usage": usage
                 },
                 "success": True
             }
@@ -113,20 +151,22 @@ class GeminiProvider:
     
     def _build_request_params(self, kwargs: Dict[str, Any]) -> Dict[str, Any]:
         """Build request parameters from config and kwargs"""
-        gen_config = {
-            "temperature": kwargs.get("temperature", self.config.get("temperature", 0.7)),
-            "max_output_tokens": kwargs.get("max_tokens", self.config.get("max_tokens", 2000)),
-        }
+        # Base config
+        params = {}
         
-        # Add optional params
-        for key in ["top_p", "top_k"]:
-            if key in kwargs:
-                gen_config[key] = kwargs[key]
-            elif key in self.config:
-                gen_config[key] = self.config[key]
+        # Temp
+        temp = kwargs.get("temperature", self.config.get("temperature"))
+        if temp is not None: params["temperature"] = float(temp)
+            
+        # Max tokens
+        max_tokens = kwargs.get("max_tokens", self.config.get("max_tokens"))
+        if max_tokens is not None: params["max_output_tokens"] = int(max_tokens)
+            
+        # Top P/K
+        if "top_p" in kwargs: params["top_p"] = float(kwargs["top_p"])
+        if "top_k" in kwargs: params["top_k"] = int(kwargs["top_k"])
         
-        # Remove None values
-        return {k: v for k, v in gen_config.items() if v is not None}
+        return params
     
     def _error_response(self, error: str) -> Dict[str, Any]:
         """Create standardized error response"""

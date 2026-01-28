@@ -55,14 +55,44 @@ async def lifespan(app: FastAPI):
     logger.info("Starting ThinkLife Backend...")
 
     # Brain Config
+    # Logic to select provider based on BRAIN_PROVIDER env var, or fallback to auto-detection
+    # Options for BRAIN_PROVIDER: "gemini", "openai", "auto" (default)
+    preferred_provider = os.getenv("BRAIN_PROVIDER", "auto").lower()
+    
+    # Check for keys
+    has_gemini_key = bool(os.getenv("GEMINI_API_KEY"))
+    has_openai_key = bool(os.getenv("OPENAI_API_KEY"))
+    
+    # Determine enablement
+    enable_gemini = False
+    enable_openai = False
+    
+    if preferred_provider == "gemini":
+        enable_gemini = has_gemini_key
+    elif preferred_provider == "openai":
+        enable_openai = has_openai_key
+    else:
+        # Auto mode: Prioritize Gemini if available, else OpenAI
+        if has_gemini_key:
+            enable_gemini = True
+        elif has_openai_key:
+            enable_openai = True
+    
     brain_config = {
         "providers": {
             "openai": {
-                "enabled": bool(os.getenv("OPENAI_API_KEY")),
+                "enabled": enable_openai,
                 "api_key": os.getenv("OPENAI_API_KEY"),
                 "model": os.getenv("OPENAI_MODEL", "gpt-4o-mini"),
                 "max_tokens": int(os.getenv("OPENAI_MAX_TOKENS", "2000")),
                 "temperature": float(os.getenv("OPENAI_TEMPERATURE", "0.7")),
+            },
+            "gemini": {
+                "enabled": enable_gemini,
+                "api_key": os.getenv("GEMINI_API_KEY"),
+                "model": os.getenv("GEMINI_MODEL", "gemini-1.5-flash"),
+                "max_tokens": int(os.getenv("GEMINI_MAX_TOKENS", "2000")),
+                "temperature": float(os.getenv("GEMINI_TEMPERATURE", "0.7")),
             }
         }
     }
