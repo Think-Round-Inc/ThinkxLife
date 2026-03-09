@@ -18,6 +18,7 @@ export async function POST(request: NextRequest) {
         user_context,
         session_id,
         user_id,
+        debug: true,
       }),
     });
 

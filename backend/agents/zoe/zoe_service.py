@@ -74,7 +74,8 @@ class ZoeService:
         user_id: str = "anonymous",
         session_id: Optional[str] = None,
         user_context: Optional[Dict[str, Any]] = None,
-        application: str = "chatbot"
+        application: str = "chatbot",
+        debug: bool = False,
     ) -> Dict[str, Any]:
         """
         Process a user message through the plugin architecture
@@ -96,6 +97,10 @@ class ZoeService:
         
         try:
             # Ensure user_context is a dict
+            print("\n🟣 [zoe_service.py] process_message START")
+            print(f"🟣 [zoe_service.py] user_id={user_id} session_id(in)={session_id} app={application} debug={debug}")
+            print(f"🟣 [zoe_service.py] message(first 80)={message[:80]!r}")
+            print(f"🟣 [zoe_service.py] user_context keys={list(user_context.keys()) if isinstance(user_context, dict) else type(user_context)}")
             if user_context is None:
                 user_context = {}
 
@@ -110,7 +115,7 @@ class ZoeService:
             
             # Ensure session_id is in user_context for consistency
             user_context["session_id"] = session_id
-            
+            print(f" [zoe_service.py] session_id(final)={session_id}")
             # 1. Create BrainRequest using ZoeCore helper
             request_data = self.zoe_core.create_brain_request(
                 message=message,
@@ -122,7 +127,9 @@ class ZoeService:
             
             # 2. Check if message needs redirection (safety)
             redirect_info = request_data.get("redirect_info")
+            print("🧭 [zoe_service.py] redirect_info =", redirect_info) 
             if redirect_info and redirect_info.get("should_redirect"):
+                print("🧭 [zoe_service.py] REDIRECTING (no cortex call)")
                 # Add to conversation history
                 self.zoe_core.conversation_manager.add_message(
                     session_id=request_data["session_id"],
@@ -138,7 +145,7 @@ class ZoeService:
                         "harmful": redirect_info.get("is_harmful", False)
                     }
                 )
-                
+          
                 return {
                     "success": True,
                     "response": redirect_info["response"],
@@ -150,7 +157,7 @@ class ZoeService:
                     },
                     "timestamp": datetime.now().isoformat()
                 }
-            
+            print("🧭 [zoe_service.py] NO redirect -> going to cortex")
             # 3. Create BrainRequest object for plugin
             from brain.specs import BrainRequest, ApplicationType
             from .helpers import create_user_context
@@ -176,12 +183,19 @@ class ZoeService:
             
             # 5. Process through plugin - cortex
             logger.info(f"Processing message through plugin for session: {request_data['session_id']}")
+            print("🟣 [zoe_service.py] calling zoe_agent.process_request() -> should enter cortex next")
             agent_response = await self.zoe_agent.process_request(brain_request)
+            print("🟣 [zoe_service.py] zoe_agent.process_request() returned")
+            debug_payload = None
+            if debug:
+               debug_payload = agent_response.metadata.get("debug")
+
             
             # 6. Handle confidence-based response
             # Extract confidence score from metadata
             confidence = agent_response.metadata.get("confidence_score", 0.0)
-            
+            print(f"🟣 [zoe_service.py] agent_response.success={agent_response.success} confidence={confidence}")
+
             # Check if response is low confidence (< 0.75)
             if confidence < 0.75:
                 logger.info(f"Low confidence response ({confidence:.2f}), using Zoe's fallback")
@@ -206,6 +220,7 @@ class ZoeService:
                     "response": zoe_fallback,
                     "session_id": agent_response.session_id,
                     "confidence": confidence,
+                    "debug": debug_payload,
                     "metadata": {
                         **agent_response.metadata,
                         "low_confidence": True,
@@ -230,6 +245,7 @@ class ZoeService:
                     "response": agent_response.content,
                     "session_id": agent_response.session_id,
                     "confidence": confidence,
+                    "debug": debug_payload,
                     "metadata": {
                         **agent_response.metadata,
                         "processing_time": agent_response.processing_time,
@@ -253,6 +269,7 @@ class ZoeService:
                     "success": False,
                     "response": fallback_response,
                     "session_id": request_data["session_id"],
+                    "debug": debug_payload,
                     "error": agent_response.metadata.get("error", "Processing failed"),
                     "metadata": {"agent": "zoe", "fallback": True},
                     "timestamp": datetime.now().isoformat()

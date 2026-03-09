@@ -24,6 +24,13 @@ except ImportError:
 
 from ..specs import WorkflowStatus
 
+def _read_text_file(path: str) -> str:
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            return f.read().strip()
+    except Exception:
+        return ""
+
 class WorkflowState(TypedDict):
     """State for LangGraph workflow"""
     # Input
@@ -138,7 +145,14 @@ class WorkflowEngine:
         execution_id = str(uuid.uuid4())
         specs = plan.optimized_specs
         start_time = time.time()
-        
+        print("\n🟦 [workflow_engine.py] execute_plan START")
+        print("🟦 [workflow_engine.py] execution_id =", execution_id)
+        print("🟦 [workflow_engine.py] provider =", getattr(specs.provider, "provider_type", None),
+              "model =", getattr(specs.provider, "model", None))
+        print("🟦 [workflow_engine.py] tools =", [t.name for t in getattr(specs, "tools", []) if getattr(t, "enabled", False)])
+        print("🟦 [workflow_engine.py] data_sources =", [str(d.source_type) for d in getattr(specs, "data_sources", []) if getattr(d, "enabled", False)])
+        print("🟦 [workflow_engine.py] user_message(first 80) =", getattr(request, "message", "")[:80])
+
         try:
             initial_state: WorkflowState = {
                 "execution_id": execution_id,
@@ -189,7 +203,13 @@ class WorkflowEngine:
             
             has_valid_content = final_content and final_content != "No response generated" and not final_content.startswith("Error:")
             is_successful = (llm_success and has_valid_content) or (has_valid_content and final_state["status"] in ["completed", "completed_with_errors"])
-            
+            print("✅ [workflow_engine.py] execute_plan DONE",
+                  "success =", is_successful,
+                  "status =", final_state.get("status"),
+                  "confidence =", final_state.get("confidence_score"),
+                  "attempts =", final_state.get("validation_attempts"),
+                  "duration =", round(((final_state.get("end_time") or time.time()) - start_time), 3))
+
             return {
                 "success": is_successful,
                 "content": final_content or "",
@@ -375,10 +395,17 @@ class WorkflowEngine:
             # Agent Metadata
             agent_meta = getattr(specs, 'agent_metadata', {})
             msg_context = agent_meta.get("messages_context", {})
+            agent_name = agent_meta.get("agent_name", "")
+
             
             if msg_context:
                 # Use agent provided context
                 sys_prompt = msg_context.get("system_prompt", "")
+
+                if agent_name == "zoe":
+                   zoe_context = _read_text_file("agents/zoe/data/context.txt")
+                   if zoe_context:
+                    sys_prompt = sys_prompt + "\n\nZOE CONTEXT:\n" + zoe_context
                 if user_info and not self._has_user_context_in_prompt(sys_prompt):
                     sys_prompt = self._enhance_prompt_with_user_info(sys_prompt, user_info)
                 
@@ -400,11 +427,18 @@ class WorkflowEngine:
             else:
                 # Generic build
                 sys_parts = []
+                if agent_name == "zoe":
+                   zoe_context = _read_text_file("agents/zoe/data/context.txt")
+                   if zoe_context:
+                     sys_parts.append("ZOE CONTEXT:\n" + zoe_context)
                 if user_info:
                     sys_parts.append(self._build_user_context_prompt(user_info))
                 
                 # Context injection into system prompt
                 ds_ctx = self._format_data_source_context(state)
+                logger.info("=== ZOE KB CONTEXT (first 1200 chars) ===")
+                logger.info(ds_ctx[:1200] if ds_ctx else "NO KB CONTEXT")
+
                 if ds_ctx: sys_parts.append(f"Context from data sources:\n{ds_ctx}")
                 
                 tool_ctx = self._format_tool_context(state)
@@ -430,7 +464,13 @@ Please generate a better, more helpful, and complete response that addresses the
                 messages.append({"role": "user", "content": request.message})
             
             state["messages"] = messages
-            
+            print("🧩 [workflow_engine.py] build_messages DONE",
+                  "count =", len(messages),
+                  "roles =", [m.get("role") for m in messages][-5:])
+            # show small preview only (avoid huge terminal spam)
+            if messages:
+                print("🧩 [workflow_engine.py] last_user_msg =", messages[-1].get("content", "")[:120])
+
         except Exception as e:
             logger.exception("Build messages node error")
             state["errors"].append(str(e))
@@ -489,6 +529,10 @@ Please generate a better, more helpful, and complete response that addresses the
                 config["api_key"] = os.getenv(key_map[p_type])
             
             provider = create_provider(p_type, config)
+            print(" [workflow_engine.py] call_provider START",
+                  "provider =", p_type,
+                  "model =", specs.provider.model)
+
             if not await provider.initialize():
                 raise RuntimeError(f"Failed to initialize provider {p_type}")
             
@@ -499,8 +543,17 @@ Please generate a better, more helpful, and complete response that addresses the
                 if specs.provider.temperature is not None: kwargs["temperature"] = specs.provider.temperature
                 if specs.provider.max_tokens: kwargs["max_tokens"] = specs.provider.max_tokens
                 if specs.provider.custom_params: kwargs.update(specs.provider.custom_params)
-                
+
+                print(" [workflow_engine.py] calling provider.generate_response()",
+                      "msg_count =", len(state["messages"]),
+                      "kwargs =", kwargs)
+
                 response = await provider.generate_response(messages=state["messages"], **kwargs)
+                print("⚙️ [workflow_engine.py] provider returned",
+                      "success =", response.get("success"),
+                      "content_len =", len(response.get("content", "") or ""),
+                      "error =", response.get("metadata", {}).get("error"))
+
                 state["llm_response"] = response
                 
                 if response.get("success"):
@@ -525,7 +578,8 @@ Please generate a better, more helpful, and complete response that addresses the
         """Validate the LLM response for quality and sensibility with confidence scoring"""
         state["execution_steps"].append("validate_response")
         state["validation_attempts"] += 1
-        
+        print("🔎 [workflow_engine.py] validate_response attempt =", state["validation_attempts"])
+
         try:
             # Get response content
             response_content = state.get("final_content", "")
@@ -544,6 +598,9 @@ Please generate a better, more helpful, and complete response that addresses the
             # Update confidence score
             confidence = validation_result.get("confidence", 0.0)
             state["confidence_score"] = confidence
+            print("🔎 [workflow_engine.py] validation confidence",
+              "confidence =", round(confidence, 3),
+              "attempt =", state["validation_attempts"])
             
             # Threshold check: >= 0.75 is acceptable
             if confidence >= 0.75:

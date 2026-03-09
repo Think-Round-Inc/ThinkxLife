@@ -139,7 +139,16 @@ class CortexFlow:
         6. Return response from workflow engine
         """
         start_time = time.time()
-        
+        print("\n [cortex.py] process_agent_request() START")
+        print(" [cortex.py] request.message(first 80):", getattr(request, "message", "")[:80])
+        print(" [cortex.py] user_id:", getattr(getattr(request, "user_context", None), "user_id", None))
+        print(" [cortex.py] application:", getattr(request, "application", None))
+        print(" [cortex.py] strategy:", getattr(getattr(agent_specs, "processing", None), "execution_strategy", "direct"))
+        print(" [cortex.py] provider:", (agent_specs.provider.provider_type if agent_specs.provider else None),
+              (agent_specs.provider.model if agent_specs.provider else None))
+        print(" [cortex.py] tools enabled:", [t.name for t in agent_specs.tools if t.enabled])
+        print(" [cortex.py] data_sources enabled:", [str(ds.source_type) for ds in agent_specs.data_sources if ds.enabled])
+
         # Initialize Langfuse if needed
         if agent_specs.processing and agent_specs.processing.eval:
             if LANGFUSE_AVAILABLE:
@@ -178,6 +187,8 @@ class CortexFlow:
             ctx_dict = asdict(request.user_context) if hasattr(request.user_context, '__dataclass_fields__') else dict(request.user_context)
             token = ctx_dict.get("token") or (request.metadata.dict().get("token") if request.metadata else None)
             
+            print("🛡️ [cortex.py] Guardrails: validating user + rate limit...")
+
             auth_result = self.security_manager.validate_user(ctx_dict, token=token)
             if not auth_result["valid"]:
                 return self._create_error_response(f"Authentication failed: {auth_result.get('error')}", start_time)
@@ -187,11 +198,14 @@ class CortexFlow:
             
             # 3. Planning
             strategy = agent_specs.processing.execution_strategy if agent_specs.processing else "direct"
-            
+            print("🧠 [cortex.py] Planning decision. strategy =", strategy)
+
             if strategy in ["reasoned", "adaptive"]:
                 logger.info(f"Creating execution plan using strategy: {strategy}")
                 plan = await self.create_execution_plan(agent_specs, request)
-                
+                print("🧠 [cortex.py] Plan created. reasoning_applied =", plan.reasoning_applied, "confidence =", plan.confidence)
+                print("🧠 [cortex.py] Plan provider =", plan.optimized_specs.provider.provider_type, plan.optimized_specs.provider.model)
+
                 # Validate reasoning output before execution
                 validation = self._validate_reasoning_output(plan, request)
                 if not validation["valid"]:
@@ -200,7 +214,8 @@ class CortexFlow:
                         f"Reasoning validation failed: {'; '.join(validation['issues'])}",
                         start_time
                     )
-                
+                print("⚙️ [cortex.py] Executing plan via workflow_engine.execute_plan() ...")
+
                 result = await self.execute_plan(plan, request)
             else:
                 logger.info("Executing directly (no reasoning)")
@@ -217,6 +232,15 @@ class CortexFlow:
                 result = await self.execute_agent_request(plan, request)
             
             result["processing_time"] = time.time() - start_time
+            print(
+               " [cortex.py] DONE. success =",
+               result.get("success"),
+               "confidence =",
+               result.get("confidence"),
+               "processing_time =",
+               round(time.time() - start_time, 3),
+            )
+
             return result
             
         except Exception as e:
@@ -240,7 +264,7 @@ class CortexFlow:
     ) -> ExecutionPlan:
         """Create execution plan based on strategy"""
         strategy = agent_specs.processing.execution_strategy
-        
+        print(" [cortex.py] create_execution_plan() strategy =", strategy)
         if strategy == "reasoned":
             return await self._create_reasoned_plan(agent_specs, request)
         
@@ -449,7 +473,16 @@ class CortexFlow:
     ) -> Dict[str, Any]:
         """Execute plan via workflow engine"""
         try:
+            print(" [cortex.py] execute_plan() calling workflow_engine.execute_plan()")
             result = await self.workflow_engine.execute_plan(plan=plan, request=request)
+            print(
+              "⚙️ [cortex.py] workflow returned. success =",
+              result.get("success"),
+              "confidence =",
+              result.get("confidence"),
+              "attempts =",
+              result.get("metadata", {}).get("validation_attempts"),
+            )
             result["execution_plan"] = plan.to_dict()
             return result
         except Exception as e:

@@ -320,24 +320,34 @@ async def legacy_chat_endpoint(request: Dict[str, Any], zoe: ZoeService = Depend
         uid = request.get("user_id", "anonymous")
         sid = request.get("session_id")
         ctx = request.get("user_context", {})
+        debug = bool(request.get("debug", False))
+
+        print(f"✅ [main.py] uid={uid} sid={sid} debug={debug}")
+        print(f"✅ [main.py] msg(first 80)={msg[:80]!r}")
+        print(f"✅ [main.py] ctx keys={list(ctx.keys()) if isinstance(ctx, dict) else type(ctx)}")
 
         if ctx.get("ace_score", 0) >= 4:
             return {"success": False, "error": "ACE score restriction", "restricted": True}
 
         if not msg.strip(): return {"success": False, "error": "No message"}
         
-        res = await zoe.process_message(msg, uid, sid, ctx, "chatbot")
+        print("✅ [main.py] calling zoe.process_message() ...")
+        res = await zoe.process_message(msg, uid, sid, ctx, "chatbot", debug=debug)
+        print("DEBUG FLAG:", debug, "RES KEYS:", res.keys())
         
         audio = None
         if (ctx.get("avatar_mode") or ctx.get("test_tts")) and res.get("success"):
             audio = await tts_service.generate_speech(res.get("response", ""))
-            
+
+        print("✅ [main.py] returning response to frontend\n")
+   
         return {
             "response": res.get("response", ""),
             "success": res.get("success", False),
             "error": res.get("error"),
             "session_id": res.get("session_id"),
             "audio_data": audio,
+            "debug": res.get("debug"),
             "timestamp": datetime.now().isoformat()
         }
     except Exception as e:

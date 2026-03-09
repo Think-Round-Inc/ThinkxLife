@@ -82,7 +82,7 @@ class ZoeAgent(IAgent):
             "current_message": request.message
         }
         
-        default_db = Path(__file__).resolve().parent.parent / "data" / "zoe.sqlite3"
+        default_db = Path(__file__).resolve().parent.parent / "agents" / "zoe" / "chroma_db"
         db_path = os.getenv("ZOE_VECTOR_DB_PATH", str(default_db))
         
         return AgentExecutionSpec(
@@ -123,7 +123,14 @@ class ZoeAgent(IAgent):
         
         session_id = request.user_context.session_id
         start_time = 0.0
-        
+
+        debug = False
+        try:
+            # If your BrainRequest.user_context has metadata/custom fields, adjust accordingly
+            debug = bool(getattr(request, "metadata", {}).get("debug", False))
+        except Exception:
+            debug = False
+
         try:
             import time
             start_time = time.time()
@@ -132,6 +139,17 @@ class ZoeAgent(IAgent):
             
             logger.info(f"Zoe processing for session: {session_id}")
             cortex_res = await self.cortex.process_agent_request(agent_specs, request)
+
+            retrieved_docs = []
+            if debug:
+               # try common keys where Cortex might return retrieved context
+               retrieved_docs = (
+                  cortex_res.get("retrieved_docs")
+                  or cortex_res.get("context_docs")
+                  or cortex_res.get("documents")
+                  or []
+                )
+
             
             if cortex_res.get("success"):
                 llm_res = cortex_res.get("content", "")
@@ -154,6 +172,31 @@ class ZoeAgent(IAgent):
                     "session_id": session_id
                 }
                 
+                if debug:
+                   debug_items = []
+                   for d in retrieved_docs[:5]:
+                       # If it's a LangChain Document
+                       if hasattr(d, "page_content"):
+                          debug_items.append({
+                            "source": (getattr(d, "metadata", {}) or {}).get("source"),
+                            "category": (getattr(d, "metadata", {}) or {}).get("category"),
+                            "text": (d.page_content or "")[:200],
+                          })
+                        # If it's already a dict
+                       elif isinstance(d, dict):
+                            md = d.get("metadata", {}) if isinstance(d.get("metadata"), dict) else {}
+                            text = d.get("page_content") or d.get("content") or d.get("text") or ""
+                            debug_items.append({
+                               "source": md.get("source") or d.get("source"),
+                               "category": md.get("category") or d.get("category"),
+                               "text": (text or "")[:200],
+                            })
+
+                   metadata["debug"] = {
+                       "retrieved": debug_items
+                   }
+
+
                 # Include execution plan and estimates if available
                 if "execution_plan" in cortex_res:
                     metadata["execution_plan"] = cortex_res["execution_plan"]

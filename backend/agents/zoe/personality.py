@@ -2,7 +2,7 @@
 Zoe Personality Module
 Defines Zoe's personality traits, response filtering, and behavioral patterns
 """
-
+import unicodedata
 import logging
 import re
 import random
@@ -132,7 +132,7 @@ class ZoePersonality:
         Check if the user's message is asking about topics outside of Zoe's scope.
         Returns True if the message should be redirected back to therapeutic support.
         """
-        message_lower = message.lower()
+        message_lower = self._normalize(message)
 
         # CRITICAL SAFETY: Check for harmful requests first
         if self._is_harmful_request(message_lower):
@@ -189,6 +189,7 @@ class ZoePersonality:
         # Check for off-topic patterns
         for pattern in off_topic_patterns:
             if re.search(pattern, message_lower):
+                logger.info(f"[zoe_personality] off_topic matched OFF_TOPIC_PATTERN: {pattern} | msg={message_lower!r}")
                 return True
 
         # Check for requests that seem like they're asking for factual information
@@ -203,10 +204,15 @@ class ZoePersonality:
                 r"\b(tell me about|explain|describe)\b"
                 r"(?!.*\b(my|me|I|feeling|experience)\b)"
             ),
+            (
+                r"^(name|list)\s+"
+                r"(?!.*\b(my|me|i|feel|feeling|experience)\b)"
+            ),
         ]
 
         for pattern in factual_patterns:
             if re.search(pattern, message_lower):
+                logger.info(f"[zoe_personality] off_topic matched FACTUAL_PATTERN: {pattern} | msg={message_lower!r}")
                 return True
 
         return False
@@ -223,6 +229,9 @@ class ZoePersonality:
             r"\b(want to die|wish.*dead|better off dead)\b",
             r"\b(ways to.*(?:die|suicide|kill))\b",
             r"\b(painless.*(?:death|suicide|die))\b",
+            r"\b(i\s+(?:do\s+not|don't)\s+want\s+to\s+live(?:\s+anymore|\s+at\s+all)?)\b(?!\s+in\b|\s+with\b)",
+            r"\b(i\s+can't\s+go\s+on)\b",
+            r"\b(life\s+is(?:\s+not)?\s+worth\s+living)\b",
         ]
         
         # Violence and harm to others
@@ -613,6 +622,20 @@ class ZoePersonality:
         import random
         return random.choice(error_responses)
     
+    
+    def _normalize(self, text: str) -> str:
+      # Normalize unicode (handles smart quotes, etc.)
+      text = unicodedata.normalize("NFKC", text)
+
+      # Replace common smart quotes manually (extra safety)
+      text = (text.replace("\u2019", "'")   # ’
+                .replace("\u2018", "'")   # ‘
+                .replace("\u201C", '"')   # “
+                .replace("\u201D", '"'))  # ”
+
+      return text.lower().strip()
+
+
     def _ensure_trauma_safe_language(self, response: str, context: Dict[str, Any]) -> str:
         """
         Ensure response uses trauma-safe language patterns
@@ -656,5 +679,6 @@ class ZoePersonality:
                 import random
                 validation = random.choice(validation_phrases)
                 safe_response = validation + safe_response
+
         
         return safe_response 

@@ -218,14 +218,35 @@ class ZoeCore:
         
         # Check if message needs redirection (safety check)
         redirect_info = None
-        if self.personality.is_off_topic_request(message):
-            is_harmful = self.personality._is_harmful_request(message.lower())
-            redirect_response = self.personality.get_redirect_response(is_harmful=is_harmful)
-            redirect_info = {
-                "should_redirect": True,
-                "response": redirect_response,
-                "is_harmful": is_harmful
-            }
+        normalized = self.personality._normalize(message)
+
+        harmful = self.personality._is_harmful_request(normalized)  # True/False
+        off_topic = (not harmful) and self.personality.is_off_topic_request(normalized)
+
+        print("🧠 [zoe_core.py] redirect check",
+           "message=", message[:80],
+           "off_topic=", off_topic,
+           "harmful=", harmful)
+        
+        if harmful:
+         redirect_response = self.personality.get_redirect_response(is_harmful=True)
+         print("🧠 [zoe_core.py] redirecting (HARMFUL) preview=", redirect_response[:80])
+         redirect_info = {
+          "should_redirect": True,
+          "response": redirect_response,
+          "is_harmful": True
+         }
+
+        elif off_topic:
+          redirect_response = self.personality.get_redirect_response(is_harmful=harmful)
+          print("🧠 [zoe_core.py] redirecting with response_preview=", redirect_response[:80])
+
+          redirect_info = {
+           "should_redirect": True,
+           "response": redirect_response,
+           "is_harmful": False
+          }
+        
         
         return {
             "message": message,
