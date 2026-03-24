@@ -1,0 +1,808 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Think Round FAQ Bot</title>
+  <style>
+    :root {
+      --bg: #f4f7fb;
+      --panel: #ffffff;
+      --panel-2: #f8fafc;
+      --text: #172033;
+      --muted: #667085;
+      --border: #dbe4f0;
+      --primary: #2563eb;
+      --primary-soft: #eaf2ff;
+      --bot-soft: #eef7ef;
+      --bot-border: #62b36a;
+      --user-border: #4c8bf5;
+      --shadow: 0 10px 30px rgba(15, 23, 42, 0.08);
+      --radius: 18px;
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    body {
+      margin: 0;
+      font-family: Arial, sans-serif;
+      background:
+        radial-gradient(circle at top left, #eef4ff 0%, transparent 35%),
+        radial-gradient(circle at top right, #eef8f0 0%, transparent 30%),
+        var(--bg);
+      color: var(--text);
+    }
+
+    .page {
+      max-width: 1100px;
+      margin: 32px auto;
+      padding: 0 18px 28px;
+    }
+
+    .hero {
+      margin-bottom: 18px;
+      text-align: center;
+    }
+
+    .hero h1 {
+      margin: 0 0 10px;
+      font-size: 40px;
+      line-height: 1.1;
+      color: #10203d;
+    }
+
+    .hero p {
+      margin: 0 auto;
+      max-width: 760px;
+      font-size: 16px;
+      line-height: 1.6;
+      color: var(--muted);
+    }
+
+    .app-shell {
+      background: var(--panel);
+      border: 1px solid var(--border);
+      border-radius: 24px;
+      box-shadow: var(--shadow);
+      overflow: hidden;
+    }
+
+    .topbar {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 16px;
+      padding: 18px 22px;
+      border-bottom: 1px solid var(--border);
+      background: linear-gradient(180deg, #ffffff, #f9fbff);
+    }
+
+    .brand {
+      display: flex;
+      align-items: center;
+      gap: 14px;
+    }
+
+    .brand-badge {
+      width: 44px;
+      height: 44px;
+      border-radius: 14px;
+      background: linear-gradient(135deg, #2563eb, #4f8cff);
+      color: white;
+      display: grid;
+      place-items: center;
+      font-weight: 700;
+      font-size: 18px;
+      box-shadow: 0 8px 20px rgba(37, 99, 235, 0.25);
+    }
+
+    .brand-text h2 {
+      margin: 0;
+      font-size: 19px;
+      color: #12213f;
+    }
+
+    .brand-text span {
+      display: block;
+      margin-top: 4px;
+      font-size: 13px;
+      color: var(--muted);
+    }
+
+    .clear-btn {
+      border: 1px solid var(--border);
+      background: white;
+      color: #334155;
+      padding: 10px 14px;
+      border-radius: 12px;
+      font-size: 14px;
+      cursor: pointer;
+      transition: 0.2s ease;
+    }
+
+    .clear-btn:hover {
+      background: #f8fafc;
+    }
+
+    .content {
+      display: grid;
+      grid-template-columns: 280px 1fr;
+      min-height: 72vh;
+    }
+
+    .sidebar {
+      border-right: 1px solid var(--border);
+      background: var(--panel-2);
+      padding: 20px 18px;
+    }
+
+    .sidebar h3 {
+      margin: 0 0 12px;
+      font-size: 16px;
+      color: #12213f;
+    }
+
+    .sidebar p {
+      margin: 0 0 16px;
+      color: var(--muted);
+      font-size: 14px;
+      line-height: 1.5;
+    }
+
+    .suggestions {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 10px;
+      margin-bottom: 24px;
+    }
+
+    .chip {
+      border: 1px solid var(--border);
+      background: white;
+      color: #24324a;
+      border-radius: 999px;
+      padding: 10px 12px;
+      font-size: 13px;
+      line-height: 1.3;
+      cursor: pointer;
+      transition: 0.2s ease;
+      text-align: left;
+    }
+
+    .chip:hover {
+      background: #eef4ff;
+      border-color: #bfd4ff;
+    }
+
+    .tips {
+      padding: 14px;
+      border-radius: 14px;
+      background: white;
+      border: 1px solid var(--border);
+    }
+
+    .tips h4 {
+      margin: 0 0 10px;
+      font-size: 14px;
+      color: #12213f;
+    }
+
+    .tips ul {
+      margin: 0;
+      padding-left: 18px;
+      color: var(--muted);
+      font-size: 13px;
+      line-height: 1.6;
+    }
+
+    .main {
+      display: flex;
+      flex-direction: column;
+      min-width: 0;
+    }
+
+    .chat-history {
+      flex: 1;
+      padding: 22px;
+      overflow-y: auto;
+      scroll-behavior: smooth;
+      background: linear-gradient(180deg, #ffffff 0%, #fbfdff 100%);
+    }
+
+    .empty-state {
+      max-width: 620px;
+      margin: 60px auto 20px;
+      padding: 30px;
+      text-align: center;
+      border: 1px dashed #cdd8e8;
+      border-radius: 20px;
+      background: #fcfdff;
+    }
+
+    .empty-state h3 {
+      margin: 0 0 10px;
+      font-size: 24px;
+      color: #12213f;
+    }
+
+    .empty-state p {
+      margin: 0;
+      color: var(--muted);
+      line-height: 1.6;
+    }
+
+    .message-row {
+      display: flex;
+      margin-bottom: 18px;
+    }
+
+    .message-row.user {
+      justify-content: flex-end;
+    }
+
+    .message-row.bot {
+      justify-content: flex-start;
+    }
+
+    .message {
+      width: min(86%, 820px);
+      border-radius: var(--radius);
+      padding: 18px 18px 16px;
+      white-space: pre-wrap;
+      line-height: 1.6;
+      border: 1px solid var(--border);
+      box-shadow: 0 4px 16px rgba(15, 23, 42, 0.04);
+    }
+
+    .message.user-message {
+      background: var(--primary-soft);
+      border-left: 5px solid var(--user-border);
+    }
+
+    .message.bot-message {
+      background: #f5f7f9;
+      border-left: 5px solid var(--bot-border);
+    }
+
+    .message-head {
+      font-weight: 700;
+      margin-bottom: 10px;
+      font-size: 15px;
+    }
+
+    .message-body {
+      font-size: 18px;
+      color: #101828;
+    }
+
+    .meta-row {
+      margin-top: 14px;
+      padding-top: 12px;
+      border-top: 1px solid #dde5ef;
+    }
+
+    .rewritten-toggle {
+      background: transparent;
+      border: none;
+      color: var(--muted);
+      font-size: 13px;
+      cursor: pointer;
+      padding: 0;
+    }
+
+    .rewritten-toggle:hover {
+      color: #334155;
+      text-decoration: underline;
+    }
+
+    .rewritten {
+      margin-top: 8px;
+      color: var(--muted);
+      font-size: 13px;
+      display: none;
+    }
+
+    .sources {
+      margin-top: 14px;
+    }
+
+    .sources-title {
+      font-weight: 700;
+      margin-bottom: 10px;
+      font-size: 14px;
+      color: #13213d;
+    }
+
+    .source-list {
+      display: grid;
+      gap: 10px;
+    }
+
+    .source-card {
+      display: block;
+      text-decoration: none;
+      color: inherit;
+      background: white;
+      border: 1px solid var(--border);
+      border-radius: 14px;
+      padding: 12px 14px;
+      transition: 0.2s ease;
+    }
+
+    .source-card:hover {
+      border-color: #bfd4ff;
+      background: #f8fbff;
+    }
+
+    .source-title {
+      font-size: 14px;
+      font-weight: 700;
+      color: #17315d;
+      margin-bottom: 6px;
+    }
+
+    .source-url {
+      font-size: 12px;
+      color: var(--muted);
+      word-break: break-word;
+    }
+
+    .composer {
+      border-top: 1px solid var(--border);
+      padding: 16px 18px 18px;
+      background: white;
+    }
+
+    .composer-inner {
+      display: flex;
+      gap: 12px;
+      align-items: flex-end;
+    }
+
+    .input-wrap {
+      flex: 1;
+      background: #f8fafc;
+      border: 1px solid var(--border);
+      border-radius: 18px;
+      padding: 10px 12px;
+    }
+
+    textarea {
+      width: 100%;
+      min-height: 58px;
+      max-height: 180px;
+      border: none;
+      outline: none;
+      resize: none;
+      background: transparent;
+      font-size: 16px;
+      line-height: 1.5;
+      color: var(--text);
+      font-family: Arial, sans-serif;
+    }
+
+    .composer-actions {
+      display: flex;
+      gap: 10px;
+      align-items: center;
+    }
+
+    .send-btn {
+      border: none;
+      background: var(--primary);
+      color: white;
+      padding: 14px 18px;
+      min-width: 96px;
+      border-radius: 16px;
+      font-size: 15px;
+      font-weight: 700;
+      cursor: pointer;
+      transition: 0.2s ease;
+      box-shadow: 0 10px 20px rgba(37, 99, 235, 0.18);
+    }
+
+    .send-btn:hover:not(:disabled) {
+      transform: translateY(-1px);
+      background: #1f56cf;
+    }
+
+    .send-btn:disabled {
+      opacity: 0.7;
+      cursor: not-allowed;
+      transform: none;
+    }
+
+    .helper-text {
+      margin-top: 10px;
+      font-size: 12px;
+      color: var(--muted);
+      display: flex;
+      justify-content: space-between;
+      gap: 10px;
+    }
+
+    .loading-text {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      color: var(--muted);
+      font-style: italic;
+      font-size: 15px;
+    }
+
+    .dots {
+      display: inline-flex;
+      gap: 4px;
+      align-items: center;
+    }
+
+    .dot {
+      width: 6px;
+      height: 6px;
+      border-radius: 50%;
+      background: #7c8ba1;
+      animation: blink 1.2s infinite ease-in-out;
+    }
+
+    .dot:nth-child(2) {
+      animation-delay: 0.15s;
+    }
+
+    .dot:nth-child(3) {
+      animation-delay: 0.3s;
+    }
+
+    @keyframes blink {
+      0%, 80%, 100% { opacity: 0.35; transform: translateY(0); }
+      40% { opacity: 1; transform: translateY(-2px); }
+    }
+
+    @media (max-width: 920px) {
+      .content {
+        grid-template-columns: 1fr;
+      }
+
+      .sidebar {
+        border-right: none;
+        border-bottom: 1px solid var(--border);
+      }
+
+      .message {
+        width: 100%;
+      }
+    }
+
+    @media (max-width: 640px) {
+      .page {
+        margin: 16px auto;
+        padding: 0 10px 16px;
+      }
+
+      .hero h1 {
+        font-size: 30px;
+      }
+
+      .topbar {
+        padding: 14px;
+      }
+
+      .chat-history {
+        padding: 14px;
+      }
+
+      .composer {
+        padding: 12px;
+      }
+
+      .composer-inner {
+        flex-direction: column;
+        align-items: stretch;
+      }
+
+      .composer-actions {
+        justify-content: flex-end;
+      }
+    }
+  </style>
+</head>
+<body>
+  <div class="page">
+    <div class="hero">
+      <h1>Think Round FAQ Bot</h1>
+      <p>
+        Ask questions about Think Round’s mission, founder, programs, volunteering,
+        and related information from the organization’s content.
+      </p>
+    </div>
+
+    <div class="app-shell">
+      <div class="topbar">
+        <div class="brand">
+          <div class="brand-badge">TR</div>
+          <div class="brand-text">
+            <h2>Think Round Assistant</h2>
+            <span>Grounded answers from the Think Round knowledge base</span>
+          </div>
+        </div>
+        <button class="clear-btn" onclick="clearChat()">New chat</button>
+      </div>
+
+      <div class="content">
+        <aside class="sidebar">
+          <h3>Suggested questions</h3>
+          <p>Use one of these to try the chatbot quickly.</p>
+
+          <div class="suggestions">
+            <button class="chip" onclick="useSuggestion('What is Think Round?')">What is Think Round?</button>
+            <button class="chip" onclick="useSuggestion('Who founded Think Round?')">Who founded Think Round?</button>
+            <button class="chip" onclick="useSuggestion('What programs do they offer?')">What programs do they offer?</button>
+            <button class="chip" onclick="useSuggestion('How can I volunteer there?')">How can I volunteer there?</button>
+            <button class="chip" onclick="useSuggestion('What is the Center for the Human Family?')">What is the Center for the Human Family?</button>
+          </div>
+
+          <div class="tips">
+            <h4>Tips</h4>
+            <ul>
+              <li>Ask direct questions for the best answers.</li>
+              <li>Press Enter to send and Shift+Enter for a new line.</li>
+              <li>Open the source cards to verify the answer.</li>
+            </ul>
+          </div>
+        </aside>
+
+        <section class="main">
+          <div id="chatHistory" class="chat-history">
+            <div id="emptyState" class="empty-state">
+              <h3>Start a conversation</h3>
+              <p>
+                Ask a question about Think Round and the chatbot will answer using
+                retrieved website content and show the supporting sources.
+              </p>
+            </div>
+          </div>
+
+          <div class="composer">
+            <div class="composer-inner">
+              <div class="input-wrap">
+                <textarea
+                  id="question"
+                  placeholder="Ask a question about Think Round..."
+                  rows="1"
+                ></textarea>
+              </div>
+              <div class="composer-actions">
+                <button id="askBtn" class="send-btn" onclick="askQuestion()">Send</button>
+              </div>
+            </div>
+            <div class="helper-text">
+              <span>Answers are based on the retrieved Think Round content.</span>
+              <span id="statusText">Ready</span>
+            </div>
+          </div>
+        </section>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    let sessionId = crypto.randomUUID();
+
+    const questionInput = document.getElementById("question");
+    const chatHistory = document.getElementById("chatHistory");
+    const askBtn = document.getElementById("askBtn");
+    const emptyState = document.getElementById("emptyState");
+    const statusText = document.getElementById("statusText");
+
+    function autoResizeTextarea() {
+      questionInput.style.height = "auto";
+      questionInput.style.height = Math.min(questionInput.scrollHeight, 180) + "px";
+    }
+
+    questionInput.addEventListener("input", autoResizeTextarea);
+
+    function useSuggestion(text) {
+      questionInput.value = text;
+      autoResizeTextarea();
+      questionInput.focus();
+    }
+
+    function clearChat() {
+      sessionId = crypto.randomUUID();
+      chatHistory.innerHTML = `
+        <div id="emptyState" class="empty-state">
+          <h3>Start a conversation</h3>
+          <p>
+            Ask a question about Think Round and the chatbot will answer using
+            retrieved website content and show the supporting sources.
+          </p>
+        </div>
+      `;
+      questionInput.value = "";
+      autoResizeTextarea();
+      statusText.textContent = "Ready";
+    }
+
+    function hideEmptyState() {
+      const state = document.getElementById("emptyState");
+      if (state) state.remove();
+    }
+
+    function scrollToBottom() {
+      chatHistory.scrollTop = chatHistory.scrollHeight;
+    }
+
+    function escapeHtml(text) {
+      const div = document.createElement("div");
+      div.textContent = text ?? "";
+      return div.innerHTML;
+    }
+
+    function createUserMessage(question) {
+      const row = document.createElement("div");
+      row.className = "message-row user";
+      row.innerHTML = `
+        <div class="message user-message">
+          <div class="message-head">You</div>
+          <div class="message-body">${escapeHtml(question)}</div>
+        </div>
+      `;
+      return row;
+    }
+
+    function createLoadingMessage() {
+      const row = document.createElement("div");
+      row.className = "message-row bot";
+      row.innerHTML = `
+        <div class="message bot-message">
+          <div class="message-head">Think Round Assistant</div>
+          <div class="loading-text">
+            Thinking
+            <span class="dots">
+              <span class="dot"></span>
+              <span class="dot"></span>
+              <span class="dot"></span>
+            </span>
+          </div>
+        </div>
+      `;
+      return row;
+    }
+
+    function renderSources(sources) {
+      if (!sources || !sources.length) return "";
+
+      const cards = sources.map(source => `
+        <a class="source-card" href="${escapeAttribute(source.url)}" target="_blank" rel="noopener noreferrer">
+          <div class="source-title">${escapeHtml(source.title || "Untitled source")}</div>
+          <div class="source-url">${escapeHtml(source.url || "")}</div>
+        </a>
+      `).join("");
+
+      return `
+        <div class="sources">
+          <div class="sources-title">Sources</div>
+          <div class="source-list">${cards}</div>
+        </div>
+      `;
+    }
+
+    function renderRewrittenQuestion(rewrittenQuestion, idSuffix) {
+      if (!rewrittenQuestion) return "";
+
+      return `
+        <div class="meta-row">
+          <button class="rewritten-toggle" onclick="toggleRewritten('${idSuffix}')">
+            Show rewritten question
+          </button>
+          <div class="rewritten" id="rewritten-${idSuffix}">
+            ${escapeHtml(rewrittenQuestion)}
+          </div>
+        </div>
+      `;
+    }
+
+    function createBotMessage(data) {
+      const row = document.createElement("div");
+      row.className = "message-row bot";
+
+      const idSuffix = Math.random().toString(36).slice(2);
+
+      row.innerHTML = `
+        <div class="message bot-message">
+          <div class="message-head">Think Round Assistant</div>
+          <div class="message-body">${formatAnswer(data.answer)}</div>
+          ${renderRewrittenQuestion(data.rewritten_question, idSuffix)}
+          ${renderSources(data.sources)}
+        </div>
+      `;
+      return row;
+    }
+
+    function formatAnswer(answer) {
+      const safe = escapeHtml(answer || "I don't know based on the provided information.");
+      return safe.replace(/\n/g, "<br>");
+    }
+
+    function escapeAttribute(text) {
+      return String(text ?? "")
+        .replace(/&/g, "&amp;")
+        .replace(/"/g, "&quot;")
+        .replace(/</g, "&lt;")
+        .replace(/>/g, "&gt;");
+    }
+
+    function toggleRewritten(idSuffix) {
+      const el = document.getElementById(`rewritten-${idSuffix}`);
+      if (!el) return;
+      const isVisible = el.style.display === "block";
+      el.style.display = isVisible ? "none" : "block";
+    }
+
+    async function askQuestion() {
+      const question = questionInput.value.trim();
+      if (!question) return;
+
+      hideEmptyState();
+
+      const userMessage = createUserMessage(question);
+      chatHistory.appendChild(userMessage);
+
+      const loadingMessage = createLoadingMessage();
+      chatHistory.appendChild(loadingMessage);
+
+      scrollToBottom();
+
+      questionInput.value = "";
+      autoResizeTextarea();
+      askBtn.disabled = true;
+      askBtn.textContent = "Sending...";
+      statusText.textContent = "Getting answer...";
+
+      try {
+        const response = await fetch("http://127.0.0.1:8000/ask", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json"
+          },
+          body: JSON.stringify({
+            question: question,
+            session_id: sessionId
+          })
+        });
+
+        if (!response.ok) {
+          throw new Error("Request failed");
+        }
+
+        const data = await response.json();
+        const botMessage = createBotMessage(data);
+        loadingMessage.replaceWith(botMessage);
+        statusText.textContent = "Answer received";
+      } catch (error) {
+        loadingMessage.innerHTML = `
+          <div class="message bot-message">
+            <div class="message-head">Think Round Assistant</div>
+            <div class="message-body">Sorry, I could not reach the FAQ API.</div>
+          </div>
+        `;
+        statusText.textContent = "Connection issue";
+      } finally {
+        askBtn.disabled = false;
+        askBtn.textContent = "Send";
+        scrollToBottom();
+      }
+    }
+
+    questionInput.addEventListener("keydown", function (e) {
+      if (e.key === "Enter" && !e.shiftKey) {
+        e.preventDefault();
+        askQuestion();
+      }
+    });
+
+    autoResizeTextarea();
+  </script>
+</body>
+</html>

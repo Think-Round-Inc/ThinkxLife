@@ -1,0 +1,12 @@
+fastapi
+uvicorn
+pydantic
+python-dotenv
+requests
+beautifulsoup4
+pymupdf
+langchain
+langchain-community
+langchain-openai
+faiss-cpu
+tiktoken
