@@ -19,107 +19,28 @@ STOPWORDS = {
 }
 
 
-def load_vector_db():
-    embeddings = OpenAIEmbeddings()
-    vector_db = FAISS.load_local(
-        VECTOR_DB_DIR,
-        embeddings,
-        allow_dangerous_deserialization=True
-    )
-    return vector_db
-
-
 def load_chunks():
     with open(CHUNKS_FILE, "r", encoding="utf-8") as f:
         return json.load(f)
 
 
+def load_vector_db():
+    embeddings = OpenAIEmbeddings()
+    return FAISS.load_local(
+        VECTOR_DB_DIR,
+        embeddings,
+        allow_dangerous_deserialization=True
+    )
+
+
+CHUNKS = load_chunks()
+VECTOR_DB = load_vector_db()
+LLM = ChatOpenAI(model="gpt-4o-mini", temperature=0)
+
+
 def tokenize(text):
-    words = re.findall(r"\b[a-zA-Z0-9]+\b", text.lower())
+    words = re.findall(r"\b[a-zA-Z0-9]+\b", (text or "").lower())
     return [w for w in words if w not in STOPWORDS and len(w) > 1]
-
-
-def keyword_boost_search(question, max_results=8):
-    question_lower = question.lower()
-    question_words = tokenize(question)
-    chunks = load_chunks()
-
-    scored = []
-    for chunk in chunks:
-        title = chunk.get("title", "").lower()
-        url = chunk.get("url", "").lower()
-        text = chunk.get("text", "").lower()
-
-        title_tokens = set(tokenize(title))
-        url_tokens = set(tokenize(url.replace("-", " ").replace("/", " ")))
-        text_tokens = set(tokenize(text))
-
-        score = 0
-
-        for word in question_words:
-            if word in title_tokens:
-                score += 6
-            if word in url_tokens:
-                score += 5
-            if word in text_tokens:
-                score += 2
-
-        combined_text = f"{title} {url} {text}"
-
-        if "volunteer" in question_lower:
-            if "volunteer" in combined_text:
-                score += 30
-            if "opportunit" in combined_text:
-                score += 12
-            if "interested in volunteering" in combined_text:
-                score += 18
-            if "contact us" in combined_text:
-                score += 6
-
-        if "program" in question_lower or "offer" in question_lower:
-            if "program" in combined_text:
-                score += 12
-            if "center for the human family" in combined_text:
-                score += 8
-            if "keep" in combined_text or "intergenerational afterschool program" in combined_text:
-                score += 8
-
-        if score > 0:
-            scored.append((score, chunk))
-
-    scored.sort(key=lambda x: x[0], reverse=True)
-    return [item[1] for item in scored[:max_results]]
-
-
-def rewrite_question_with_history(chat_history, current_question):
-    if not chat_history:
-        return current_question
-
-    history_text = ""
-    for turn in chat_history[-6:]:
-        history_text += f"User: {turn['user']}\nAssistant: {turn['assistant']}\n"
-
-    llm = ChatOpenAI(model="gpt-4o-mini", temperature=0)
-
-    prompt = f"""
-You are helping convert a follow-up user question into a standalone question.
-
-Given the conversation history and the latest user question, rewrite the latest question
-so it is fully self-contained and clear on its own.
-
-If the latest question is already standalone, return it unchanged.
-
-Conversation history:
-{history_text}
-
-Latest user question:
-{current_question}
-
-Return only the rewritten standalone question.
-"""
-
-    response = llm.invoke(prompt)
-    return response.content.strip()
 
 
 def normalize_chunk(chunk):
@@ -131,206 +52,357 @@ def normalize_chunk(chunk):
     }
 
 
-def retrieve_context(question, k=10):
-    vector_db = load_vector_db()
-
-    faiss_docs = vector_db.similarity_search(question, k=k)
-    boosted_chunks = keyword_boost_search(question, max_results=8)
-
-    combined = []
-    seen_chunk_ids = set()
-
-    for chunk in boosted_chunks:
-        chunk_id = chunk.get("chunk_id")
-        if chunk_id not in seen_chunk_ids:
-            combined.append(normalize_chunk(chunk))
-            seen_chunk_ids.add(chunk_id)
-
-    for doc in faiss_docs:
-        chunk_id = doc.metadata.get("chunk_id")
-        if chunk_id not in seen_chunk_ids:
-            combined.append({
-                "text": doc.page_content,
-                "title": doc.metadata.get("title", "Unknown Title"),
-                "url": doc.metadata.get("url", "Unknown URL"),
-                "chunk_id": chunk_id
-            })
-            seen_chunk_ids.add(chunk_id)
-
-    if "volunteer" in question.lower():
-        chunks = load_chunks()
-        volunteer_candidates = []
-        for chunk in chunks:
-            combined_text = (
-                chunk.get("title", "") + " " +
-                chunk.get("url", "") + " " +
-                chunk.get("text", "")
-            ).lower()
-
-            if (
-                "volunteer" in combined_text
-                or "interested in volunteering" in combined_text
-                or "opportunit" in combined_text
-            ):
-                volunteer_candidates.append(chunk)
-
-        volunteer_candidates.sort(
-            key=lambda c: (
-                "volunteer" not in c.get("title", "").lower(),
-                "volunteer" not in c.get("text", "").lower()
-            )
-        )
-
-        for chunk in volunteer_candidates:
-            chunk_id = chunk.get("chunk_id")
-            if chunk_id not in seen_chunk_ids:
-                combined.insert(0, normalize_chunk(chunk))
-                seen_chunk_ids.add(chunk_id)
-                break
-
-    print("\n[DEBUG] Retrieved chunk titles:")
-    for d in combined[:8]:
-        print("-", d["title"])
-
-    return combined[:8]
+def is_definition_query(question: str) -> bool:
+    q = question.lower().strip()
+    triggers = [
+        "what is think round",
+        "who is think round",
+        "tell me about think round",
+        "about think round",
+        "what does think round do",
+        "what is the mission of think round"
+    ]
+    return any(t in q for t in triggers)
 
 
-def build_prompt(question, docs, chat_history):
-    context_parts = []
-    for i, doc in enumerate(docs, start=1):
-        context_parts.append(
-            f"Source {i}:\n"
-            f"Title: {doc['title']}\n"
-            f"URL: {doc['url']}\n"
-            f"Content: {doc['text']}\n"
-        )
+def is_founder_query(question: str) -> bool:
+    q = question.lower().strip()
+    triggers = [
+        "who founded think round",
+        "founder of think round",
+        "who is the founder of think round"
+    ]
+    return any(t in q for t in triggers)
 
-    context = "\n\n".join(context_parts)
+
+def is_program_query(question: str) -> bool:
+    q = question.lower().strip()
+    triggers = [
+        "what programs do they offer",
+        "what programs does think round offer",
+        "programs of think round",
+        "what does think round offer"
+    ]
+    return any(t in q for t in triggers)
+
+
+def is_volunteer_query(question: str) -> bool:
+    q = question.lower().strip()
+    triggers = [
+        "volunteer",
+        "volunteering",
+        "how can i volunteer",
+        "how do i volunteer",
+        "how to volunteer",
+        "can i volunteer",
+        "get involved",
+        "help out",
+        "join as a volunteer"
+    ]
+    return any(t in q for t in triggers)
+
+
+def get_url_priority(url: str, question: str) -> int:
+    url = (url or "").lower()
+    q = question.lower()
+    score = 0
+
+    # Positive boosts
+    if url.endswith(".org") or url.endswith(".org/") or url == "https://www.thinkround.org":
+        score += 12
+
+    if "about" in url:
+        score += 10
+
+    if "mission" in url:
+        score += 8
+
+    if "founder" in url:
+        score += 10
+
+    if "program" in url:
+        score += 8
+
+    if "volunteer" in url or "new-page-96" in url:
+        score += 20
+
+    if "contact" in url:
+        score += 6
+
+    if "our-board" in url:
+        score += 6
+
+    if "center-for-the-human-family" in url and "center for the human family" in q:
+        score += 12
+
+    # Negative penalties
+    if "/blogs" in url or "blog" in url:
+        score -= 8
+
+    if "new-page" in url and "new-page-96" not in url:
+        score -= 10
+
+    if "installation" in url or "exhibition" in url or "paradise-project" in url:
+        score -= 12
+
+    # Query-specific boosts
+    if is_definition_query(question):
+        if "about" in url or url.endswith(".org/") or url == "https://www.thinkround.org":
+            score += 12
+        if "/blogs" in url or ("new-page" in url and "new-page-96" not in url):
+            score -= 10
+
+    if is_founder_query(question):
+        if "founder" in url or "about" in url or "our-board" in url:
+            score += 10
+
+    if is_program_query(question):
+        if "program" in url or "about" in url:
+            score += 8
+
+    if is_volunteer_query(question):
+        if "volunteer" in url or "new-page-96" in url:
+            score += 25
+        if "contact" in url:
+            score += 8
+        if "about" in url:
+            score += 2
+        if "/blogs" in url or ("new-page" in url and "new-page-96" not in url):
+            score -= 12
+
+    return score
+
+
+def keyword_boost_search(question, max_results=8):
+    question_words = tokenize(question)
+    scored = []
+
+    for chunk in CHUNKS:
+        title = chunk.get("title", "")
+        text = chunk.get("text", "")
+        url = chunk.get("url", "")
+
+        title_tokens = set(tokenize(title))
+        text_tokens = set(tokenize(text))
+        full_text = f"{title} {text} {url}".lower()
+
+        score = 0
+
+        for word in question_words:
+            if word in title_tokens:
+                score += 8
+            if word in text_tokens:
+                score += 4
+
+        score += get_url_priority(url, question)
+
+        if is_volunteer_query(question):
+            if "volunteer" in full_text:
+                score += 20
+            if "get involved" in full_text:
+                score += 16
+            if "join us" in full_text:
+                score += 12
+            if "contact" in full_text:
+                score += 6
+            if "opportunit" in full_text:
+                score += 8
+            if "creative skillsets" in full_text:
+                score += 8
+
+        if score > 0:
+            scored.append((score, chunk))
+
+    scored.sort(key=lambda x: x[0], reverse=True)
+    return [normalize_chunk(item[1]) for item in scored[:max_results]]
+
+
+def rewrite_question_with_history(chat_history, current_question):
+    if not chat_history:
+        return current_question
 
     history_text = ""
-    for turn in chat_history[-6:]:
+    for turn in chat_history[-4:]:
         history_text += f"User: {turn['user']}\nAssistant: {turn['assistant']}\n"
 
     prompt = f"""
-You are a strict Think Round FAQ assistant.
+You are an expert query rewriting assistant.
 
-RULES:
-1. Answer ONLY using the provided context.
-2. Use ONLY information that is explicitly written in the context.
-3. Do NOT infer, assume, or add extra details.
-4. If possible, reuse exact phrases from the context.
-5. Do NOT add suggestions like "contact them" unless explicitly stated.
-6. Do NOT add emails, phone numbers, links, or contact details unless they appear in the context for this answer.
-7. If the answer is not clearly present, say exactly:
-   "I don't know based on the provided information."
+Rewrite follow-up questions into standalone questions.
 
-STYLE:
-- Be concise and natural
-- Prefer 1–3 sentences
-- Stay very close to the wording in the context
-- Do not include a sources section
-- Return only the answer text
+Rules:
+- If vague (e.g., "what about eligibility?"), include previous topic.
+- Preserve the exact meaning.
+- Do NOT answer.
+- Keep it concise.
+- Return only the rewritten question.
 
-Conversation history:
+Conversation:
 {history_text}
 
-Current user question:
+Question:
+{current_question}
+
+Rewritten:
+"""
+
+    response = LLM.invoke(prompt)
+    return response.content.strip() or current_question
+
+
+def retrieve_context(question, k=10, score_threshold=1.35):
+    candidates = []
+
+    # 1. FAISS retrieval
+    try:
+        faiss_results = VECTOR_DB.similarity_search_with_score(question, k=k)
+    except Exception:
+        faiss_results = [(doc, None) for doc in VECTOR_DB.similarity_search(question, k=k)]
+
+    for doc, distance in faiss_results:
+        url = doc.metadata.get("url", "")
+        title = doc.metadata.get("title", "")
+        chunk_id = doc.metadata.get("chunk_id")
+
+        # Lower FAISS distance is better
+        if distance is not None and distance > score_threshold:
+            continue
+
+        base_score = 100
+        if distance is not None:
+            base_score = 100 - (distance * 20)
+
+        total_score = base_score + get_url_priority(url, question)
+
+        candidates.append({
+            "text": doc.page_content,
+            "title": title,
+            "url": url,
+            "chunk_id": chunk_id,
+            "score": total_score
+        })
+
+    # 2. Keyword retrieval
+    keyword_results = keyword_boost_search(question, max_results=8)
+    for chunk in keyword_results:
+        total_score = 40 + get_url_priority(chunk.get("url", ""), question)
+        candidates.append({
+            **chunk,
+            "score": total_score
+        })
+
+    # 3. Deduplicate by chunk_id/url/text prefix
+    deduped = []
+    used_keys = set()
+
+    for item in candidates:
+        key = (
+            item.get("chunk_id"),
+            item.get("url"),
+            item.get("text", "")[:120]
+        )
+        if key in used_keys:
+            continue
+        used_keys.add(key)
+        deduped.append(item)
+
+    # 4. Query-specific filtering
+    filtered = []
+    for item in deduped:
+        url = (item.get("url") or "").lower()
+
+        if is_definition_query(question):
+            if "/blogs" in url or ("new-page" in url and "new-page-96" not in url) or "installation" in url or "exhibition" in url:
+                continue
+
+        if is_volunteer_query(question):
+            if "/blogs" in url or "installation" in url or "exhibition" in url:
+                continue
+
+        filtered.append(item)
+
+    # fallback if filtering removes too much
+    if len(filtered) < 3:
+        filtered = deduped
+
+    # 5. Final sort
+    filtered.sort(key=lambda x: x["score"], reverse=True)
+
+    print("\n[DEBUG] Question:", question)
+    print("[DEBUG] Top retrieval results:")
+    for item in filtered[:6]:
+        print(
+            f"- score={item['score']:.2f} | "
+            f"title={item.get('title')} | "
+            f"url={item.get('url')}"
+        )
+
+    # 6. Return final docs
+    final_docs = []
+    used_chunk_ids = set()
+
+    for item in filtered:
+        cid = item.get("chunk_id")
+        # allow docs without chunk_id too
+        dedupe_key = cid if cid is not None else (item.get("url"), item.get("text", "")[:120])
+
+        if dedupe_key in used_chunk_ids:
+            continue
+        used_chunk_ids.add(dedupe_key)
+
+        final_docs.append({
+            "text": item.get("text", ""),
+            "title": item.get("title", "Unknown Title"),
+            "url": item.get("url", "Unknown URL"),
+            "chunk_id": cid
+        })
+
+        if len(final_docs) >= 4:
+            break
+
+    return final_docs
+
+
+def build_prompt(question, docs, chat_history):
+    context = "\n\n".join([
+        f"Title: {d['title']}\nURL: {d['url']}\nContent: {d['text']}"
+        for d in docs
+    ])
+
+    return f"""
+You are a strict Think Round FAQ assistant.
+
+Answer only from the context below.
+
+Rules:
+- Use only information explicitly supported by the context.
+- Prefer the most relevant sources for the question.
+- For broad questions like "What is Think Round?", prioritize homepage/about/mission content.
+- For volunteering questions, if the context mentions volunteering but does not provide detailed steps, explain what is available and say that the site content does not show detailed signup steps.
+- Do NOT hallucinate details.
+- If nothing relevant exists, say exactly:
+I don't know based on the provided information.
+
+Question:
 {question}
 
 Context:
 {context}
 """
-    return prompt
-
-
-def extract_safe_volunteer_answer(docs):
-    for doc in docs:
-        text = doc.get("text", "")
-        sentences = re.split(r"(?<=[.!?])\s+", text)
-
-        selected = []
-        for sentence in sentences:
-            s = sentence.strip()
-            s_lower = s.lower()
-
-            if not s:
-                continue
-
-            if "volunteer" in s_lower or "opportunit" in s_lower:
-                selected.append(s)
-
-            if len(selected) >= 2:
-                break
-
-        if selected:
-            return " ".join(selected)
-
-    return "I don't know based on the provided information."
-
-
-def is_hallucinated_contact_answer(response_text):
-    lowered = response_text.lower()
-    forbidden_patterns = [
-        "@",
-        "email",
-        "contact them",
-        "contact us",
-        "reach out",
-        "phone",
-        "call",
-        "info@"
-    ]
-    return any(pattern in lowered for pattern in forbidden_patterns)
 
 
 def answer_question(question, chat_history=None):
     if chat_history is None:
         chat_history = []
 
-    standalone_question = rewrite_question_with_history(chat_history, question)
-    docs = retrieve_context(standalone_question, k=10)
-    prompt = build_prompt(standalone_question, docs, chat_history)
+    standalone = rewrite_question_with_history(chat_history, question)
+    docs = retrieve_context(standalone)
+    prompt = build_prompt(standalone, docs, chat_history)
 
-    llm = ChatOpenAI(model="gpt-4o-mini", temperature=0)
-    response = llm.invoke(prompt)
-    response_text = response.content.strip()
+    response = LLM.invoke(prompt)
+    answer = response.content.strip()
 
-    if "volunteer" in standalone_question.lower() and is_hallucinated_contact_answer(response_text):
-        response_text = extract_safe_volunteer_answer(docs)
+    if not answer:
+        answer = "I don't know based on the provided information."
 
-    if not response_text:
-        response_text = "I don't know based on the provided information."
-
-    return response_text, docs, standalone_question
-
-
-if __name__ == "__main__":
-    print("Think Round Conversational FAQ Bot")
-    print("Type 'exit' to quit.\n")
-
-    chat_history = []
-
-    while True:
-        question = input("You: ").strip()
-
-        if question.lower() == "exit":
-            print("Goodbye!")
-            break
-
-        answer, docs, rewritten = answer_question(question, chat_history)
-
-        print("\n--- REWRITTEN QUESTION ---")
-        print(rewritten)
-
-        print("\nBot:")
-        print(answer)
-
-        print("\n--- SOURCES RETRIEVED ---")
-        for i, doc in enumerate(docs, start=1):
-            print(f"{i}. {doc['title']} - {doc['url']}")
-        print()
-
-        chat_history.append({
-            "user": question,
-            "assistant": answer
-        })
+    return answer, docs, standalone
