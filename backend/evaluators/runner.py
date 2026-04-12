@@ -148,7 +148,7 @@ def load_test_cases(input_path: str, bot_type: str) -> List[Dict[str, Any]]:
 # Live response acquisition
 # ---------------------------------------------------------------------------
 
-async def get_live_response(bot_type: str, test_case: Dict[str, Any]) -> str:
+async def get_live_response(bot_type: str, test_case: Dict[str, Any]) -> Tuple[str, Optional[List]]:
     """
     Call the appropriate bot adapter to get a live response.
 
@@ -157,7 +157,8 @@ async def get_live_response(bot_type: str, test_case: Dict[str, Any]) -> str:
         test_case: Raw test case dict
 
     Returns:
-        Bot response string
+        Tuple of (bot_response_string, retrieved_docs).
+        retrieved_docs is None for Zoe (not applicable) and a list of doc dicts for FAQ.
     """
     question = test_case["question"]
     user_context = test_case.get("user_context") or {}
@@ -165,12 +166,13 @@ async def get_live_response(bot_type: str, test_case: Dict[str, Any]) -> str:
     if bot_type == "zoe":
         from evaluators.zoe_adapter import ZoeBotAdapter
         adapter = ZoeBotAdapter()
-        return await adapter.get_response(question, user_context)
+        return await adapter.get_response(question, user_context), None
 
     elif bot_type == "faq":
         from evaluators.zoe_adapter import FAQBotAdapter
         adapter = FAQBotAdapter()
-        return await adapter.get_response(question, user_context)
+        answer, docs = await adapter.get_response(question, user_context)
+        return answer, docs
 
     raise ValueError(f"No adapter for bot_type: {bot_type!r}")
 
@@ -421,10 +423,11 @@ def main() -> None:
         # Resolve bot_response
         bot_response = raw_case.get("bot_response")
 
+        live_retrieved_docs = None
         if not bot_response:
             if args.live:
                 print(f"\n  [LIVE] Getting response for {case_id}...")
-                bot_response = asyncio.run(get_live_response(args.bot, raw_case))
+                bot_response, live_retrieved_docs = asyncio.run(get_live_response(args.bot, raw_case))
             else:
                 print(
                     f"\n  [SKIP] {case_id} — no bot_response in test case and --live not set. "
@@ -433,11 +436,12 @@ def main() -> None:
                 continue
 
         # Build EvaluationInput
+        # For live FAQ runs, prefer docs returned by the adapter over test case docs
         bot_type_enum = BotType.ZOE if args.bot == "zoe" else BotType.FAQ
         evaluation_input = EvaluationInput(
             question=question,
             bot_response=bot_response,
-            retrieved_docs=raw_case.get("retrieved_docs"),
+            retrieved_docs=live_retrieved_docs if live_retrieved_docs is not None else raw_case.get("retrieved_docs"),
             expected_answer=raw_case.get("expected_answer"),
             user_context=raw_case.get("user_context"),
             metadata=raw_case.get("metadata"),

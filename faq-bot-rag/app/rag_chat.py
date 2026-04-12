@@ -1,4 +1,5 @@
 import json
+import os
 import re
 from dotenv import load_dotenv
 
@@ -7,8 +8,17 @@ from langchain_community.vectorstores import FAISS
 
 load_dotenv()
 
-VECTOR_DB_DIR = "data/vector_db"
-CHUNKS_FILE = "data/thinkround_chunks.json"
+# CHANGED: Replaced hardcoded relative paths ("data/vector_db", "data/thinkround_chunks.json")
+# with __file__-based absolute paths so this module can be imported from anywhere
+# (e.g. from backend/evaluators/) without breaking file lookups.
+#
+# TODO: Before running in live mode, the vector DB must be built first.
+#       Run this from the faq-bot-rag/ directory:
+#           python -m app.build_vector_db
+#       This generates the data/vector_db/ folder that FAISS loads below.
+_BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+VECTOR_DB_DIR = os.path.join(_BASE_DIR, "..", "data", "vector_db")
+CHUNKS_FILE = os.path.join(_BASE_DIR, "..", "data", "thinkround_chunks.json")
 
 STOPWORDS = {
     "a", "an", "the", "is", "are", "was", "were", "do", "does", "did",

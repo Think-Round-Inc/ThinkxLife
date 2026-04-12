@@ -56,6 +56,55 @@
     "metadata": {}
   },
   {
+    "id": "faq_tr_001",
+    "bot_type": "faq",
+    "question": "What is Think Round?",
+    "bot_response": "Think Round, Inc. is a 501(c)3 nonprofit organization founded in July 2004 by Heidi Hardin. Its mission is to demonstrate life's fullest potential through the arts and sciences, especially where environmental concerns meet family homes and neighborhoods. Its guiding code of ethics is: Earth is home. Humans are family.",
+    "expected_answer": "Think Round, Inc. is a nonprofit founded in 2004 by Heidi Hardin. Its mission is to demonstrate life's fullest potential through the arts and sciences, especially where environmental concerns meet family homes and neighborhoods.",
+    "user_context": null,
+    "retrieved_docs": [
+      {
+        "id": "tr_about_001",
+        "content": "Think Round, Inc. is a 501(c)3 nonprofit organization founded in July of 2004 by Heidi Hardin. The mission of Think Round, Inc. is to demonstrate life's fullest potential through the arts and sciences, especially where environmental concerns meet family homes and neighborhoods. Think Round, Inc.'s true code of ethics is: Earth is home. Humans are family."
+      }
+    ],
+    "metadata": {}
+  },
+  {
+    "id": "faq_tr_002",
+    "bot_type": "faq",
+    "question": "Who founded Think Round?",
+    "bot_response": "Think Round, Inc. was founded by Heidi Hardin in July 2004. Heidi is a fine artist and the creator of The Paradise Project. She has led the organization since its founding and her work integrates neuroscience, child development, interfaith storytelling, and environmental justice.",
+    "expected_answer": "Think Round was founded by Heidi Hardin in 2004.",
+    "user_context": null,
+    "retrieved_docs": [
+      {
+        "id": "tr_board_001",
+        "content": "The Paradise Project and founder of Think Round, Inc., which she has led since 2004. Her work integrates neuroscience, child development, interfaith storytelling, and environmental justice."
+      },
+      {
+        "id": "tr_about_002",
+        "content": "Think Round, Inc. is a 501(c)3 nonprofit organization founded in July of 2004 by Heidi Hardin. Heidi is a fine artist whose experience as an original member of San Francisco's Hunters Point community inspired the creation of Think Round."
+      }
+    ],
+    "metadata": {}
+  },
+  {
+    "id": "faq_tr_003",
+    "bot_type": "faq",
+    "question": "How can I volunteer with Think Round?",
+    "bot_response": "I don't know based on the provided information.",
+    "expected_answer": null,
+    "user_context": null,
+    "retrieved_docs": [
+      {
+        "id": "tr_about_nondiscrim",
+        "content": "Think Round, Inc. is an equal opportunity employer. We will not discriminate and will take affirmative action measures to ensure against discrimination in employment, volunteering, recruitment, advertisements for employment, compensation, termination, upgrading, promotions, and other conditions of employment."
+      }
+    ],
+    "metadata": {}
+  },
+  {
     "id": "faq_001",
     "bot_type": "faq",
     "question": "How do I reset my account password?",

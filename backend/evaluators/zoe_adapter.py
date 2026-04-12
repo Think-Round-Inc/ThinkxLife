@@ -103,22 +103,15 @@ class ZoeBotAdapter:
 
 class FAQBotAdapter:
     """
-    Placeholder adapter for the FAQ bot.
+    Adapter that calls Sruthi's faq-bot-rag answer_question() for live evaluation.
 
-    TODO (FAQ bot integration):
-    Replace this stub with a real implementation that calls the FAQ bot's
-    response generation pipeline. The interface must remain the same:
+    Returns (answer, retrieved_docs) so the runner can pass docs to FAQ-specific
+    evaluators like AnswerFaithfulnessEvaluator and RetrievalPrecisionRecallEvaluator.
 
-        get_response(question, user_context=None) -> str
-
-    The returned string should be the FAQ bot's answer text.
-
-    Typical integration steps:
-    1. Import and initialize the FAQ bot service (e.g., FAQService).
-    2. Call the FAQ bot's retrieval + generation pipeline.
-    3. Return the response text.
-    4. Optionally return retrieved_docs so the evaluator runner can
-       pass them to FAQ-specific evaluators (update runner.py accordingly).
+    Requires:
+    - OPENAI_API_KEY set in environment
+    - faq-bot-rag/data/vector_db/ must exist (run: python -m app.build_vector_db
+      from the faq-bot-rag/ directory)
     """
 
     async def get_response(
@@ -126,18 +119,45 @@ class FAQBotAdapter:
         question: str,
         user_context: Optional[Dict[str, Any]] = None,
         session_id: Optional[str] = None,
-    ) -> str:
+    ) -> tuple:
         """
-        Stub: returns a placeholder response until FAQ bot is implemented.
+        Call answer_question() from faq-bot-rag and return (answer, retrieved_docs).
 
-        Replace this method body with real FAQ bot call.
+        retrieved_docs will be a list of dicts with keys: text, title, url, chunk_id.
+        Returns (error_string, []) if the FAQ bot cannot be loaded.
         """
-        logger.warning(
-            "FAQBotAdapter.get_response() called but FAQ bot is not yet implemented. "
-            "Returning placeholder. Add bot_response to test_cases.json for offline evaluation."
-        )
-        return (
-            "[FAQ Bot placeholder] The FAQ bot is not yet implemented. "
-            "Add a bot_response field to your test case for offline evaluation, "
-            "or implement FAQBotAdapter.get_response() once the FAQ bot is ready."
-        )
+        import sys
+        import os
+
+        # Add project root to sys.path so faq-bot-rag is importable
+        project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
+        if project_root not in sys.path:
+            sys.path.insert(0, project_root)
+
+        try:
+            from faq_bot_rag.app.rag_chat import answer_question
+        except ImportError:
+            # faq-bot-rag uses a hyphen in the directory name which Python can't import directly.
+            # Fall back to importlib to load it by file path.
+            import importlib.util
+            rag_chat_path = os.path.join(project_root, "faq-bot-rag", "app", "rag_chat.py")
+            spec = importlib.util.spec_from_file_location("rag_chat", rag_chat_path)
+            rag_chat = importlib.util.module_from_spec(spec)
+            try:
+                spec.loader.exec_module(rag_chat)
+            except Exception as exc:
+                logger.error(f"Failed to load rag_chat: {exc}")
+                return (
+                    "[FAQAdapter ERROR] Could not load faq-bot-rag. "
+                    "Ensure the vector DB is built (python -m app.build_vector_db) "
+                    "and OPENAI_API_KEY is set.",
+                    []
+                )
+            answer_question = rag_chat.answer_question
+
+        try:
+            answer, docs, _ = answer_question(question)
+            return answer, docs
+        except Exception as exc:
+            logger.error(f"answer_question() failed: {exc}")
+            return f"[FAQAdapter ERROR] {exc}", []
