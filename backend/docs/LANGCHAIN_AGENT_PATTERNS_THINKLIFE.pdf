@@ -1,0 +1,616 @@
+%PDF-1.4
+1 0 obj
+<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>
+endobj
+2 0 obj
+<< /Length 2248 >>
+stream
+BT
+/F1 11 Tf
+50 781 Td
+(# ThinkLife: LangChain/LangGraph Agent Pattern Prototype and Orchestration) Tj
+T*
+() Tj
+T*
+(## 1\) What ThinkLife already has \(baseline\)) Tj
+T*
+() Tj
+T*
+(ThinkLife already implements a strong **plan-then-execute orchestration** using `CortexFlow`) Tj
+T*
+(+ `WorkflowEngine` \(LangGraph state machine\) + plugin agents.) Tj
+T*
+() Tj
+T*
+(### Core flow in code) Tj
+T*
+() Tj
+T*
+(```python) Tj
+T*
+(# backend/brain/cortex/cortex.py) Tj
+T*
+(strategy = agent_specs.processing.execution_strategy if agent_specs.processing else "direct") Tj
+T*
+() Tj
+T*
+(if strategy in ["reasoned", "adaptive"]:) Tj
+T*
+(    plan = await self.create_execution_plan\(agent_specs, request\)) Tj
+T*
+(    validation = self._validate_reasoning_output\(plan, request\)) Tj
+T*
+(    result = await self.execute_plan\(plan, request\)) Tj
+T*
+(else:) Tj
+T*
+(    plan = ExecutionPlan\(...\)) Tj
+T*
+(    result = await self.execute_agent_request\(plan, request\)) Tj
+T*
+(```) Tj
+T*
+() Tj
+T*
+(Source: `backend/brain/cortex/cortex.py:189`) Tj
+T*
+() Tj
+T*
+(```python) Tj
+T*
+(# backend/brain/cortex/workflow_engine.py) Tj
+T*
+(workflow.add_node\("initialize", self._initialize_node\)) Tj
+T*
+(workflow.add_node\("query_data_sources", self._query_data_sources_node\)) Tj
+T*
+(workflow.add_node\("execute_tools", self._execute_tools_node\)) Tj
+T*
+(workflow.add_node\("build_messages", self._build_messages_node\)) Tj
+T*
+(workflow.add_node\("call_provider", self._call_provider_node\)) Tj
+T*
+(workflow.add_node\("validate_response", self._validate_response_node\)) Tj
+T*
+(workflow.add_node\("finalize", self._finalize_node\)) Tj
+T*
+(```) Tj
+T*
+() Tj
+T*
+(Source: `backend/brain/cortex/workflow_engine.py:79`) Tj
+T*
+() Tj
+T*
+(This means ThinkLife is closest today to **Plan-and-Execute** \(with validation/retry loop\),) Tj
+T*
+(not a full ReAct or Self-Ask implementation yet.) Tj
+T*
+() Tj
+T*
+(---) Tj
+T*
+() Tj
+T*
+(## 2\) Pattern 1: ReAct \(Reason + Act\)) Tj
+T*
+() Tj
+T*
+(## What it is) Tj
+T*
+(ReAct alternates between:) Tj
+T*
+(1. reasoning about next action,) Tj
+T*
+(2. executing a tool/data action,) Tj
+T*
+(3. observing result,) Tj
+T*
+(4. repeating until final answer.) Tj
+T*
+() Tj
+T*
+(## What ThinkLife already has for ReAct) Tj
+T*
+(ThinkLife has reusable pieces:) Tj
+ET
+endstream
+endobj
+3 0 obj
+<< /Type /Page /Parent 12 0 R /Resources << /Font << /F1 1 0 R >> >> /Contents 2 0 R >>
+endobj
+4 0 obj
+<< /Length 1923 >>
+stream
+BT
+/F1 11 Tf
+50 781 Td
+() Tj
+T*
+(```python) Tj
+T*
+(# backend/brain/cortex/reasoning_engine.py) Tj
+T*
+(async def decide_next_step\(...\):) Tj
+T*
+(    ...) Tj
+T*
+(    return self._parse_decision\(response.get\("content", ""\)\)) Tj
+T*
+(```) Tj
+T*
+() Tj
+T*
+(Source: `backend/brain/cortex/reasoning_engine.py:35`) Tj
+T*
+() Tj
+T*
+(```python) Tj
+T*
+(def _parse_decision\(self, llm_response: str\) -> Dict[str, Any]:) Tj
+T*
+(    if "tool" in resp: return {"action": "use_tool", ...}) Tj
+T*
+(    if "data" in resp or "search" in resp: return {"action": "query_data", ...}) Tj
+T*
+(    if "complete" in resp or "done" in resp: return {"action": "complete", ...}) Tj
+T*
+(```) Tj
+T*
+() Tj
+T*
+(Source: `backend/brain/cortex/reasoning_engine.py:145`) Tj
+T*
+() Tj
+T*
+(## Current gap) Tj
+T*
+(`WorkflowEngine` tool execution is currently placeholder:) Tj
+T*
+() Tj
+T*
+(```python) Tj
+T*
+(# backend/brain/cortex/workflow_engine.py) Tj
+T*
+(results.append\({) Tj
+T*
+(    "tool": tool.name,) Tj
+T*
+(    "status": "executed",) Tj
+T*
+(    "result": "Tool execution placeholder") Tj
+T*
+(}\)) Tj
+T*
+(```) Tj
+T*
+() Tj
+T*
+(Source: `backend/brain/cortex/workflow_engine.py:342`) Tj
+T*
+() Tj
+T*
+(So ReAct is not yet fully closed-loop in production.) Tj
+T*
+() Tj
+T*
+(## Production multi-agent use case) Tj
+T*
+(- **Best for**: dynamic retrieval/search-heavy tasks where agent must iteratively decide) Tj
+T*
+(next step \(research, support triage, incident investigation\).) Tj
+T*
+(- **In ThinkLife**: a ?Research Agent? could repeatedly query Tavily + vector DB until) Tj
+T*
+(confidence is acceptable, then handoff final result to a ?Care Response Agent.?) Tj
+T*
+() Tj
+T*
+(---) Tj
+T*
+() Tj
+T*
+(## 3\) Pattern 2: Plan-and-Execute) Tj
+T*
+() Tj
+T*
+(## What it is) Tj
+T*
+(Two-phase architecture:) Tj
+T*
+(1. create plan,) Tj
+T*
+(2. execute plan deterministically.) Tj
+T*
+() Tj
+T*
+(## ThinkLife implementation \(already strong\)) Tj
+T*
+() Tj
+T*
+(```python) Tj
+ET
+endstream
+endobj
+5 0 obj
+<< /Type /Page /Parent 12 0 R /Resources << /Font << /F1 1 0 R >> >> /Contents 4 0 R >>
+endobj
+6 0 obj
+<< /Length 2055 >>
+stream
+BT
+/F1 11 Tf
+50 781 Td
+(# backend/brain/specs/workflow_specs.py) Tj
+T*
+(execution_strategy: str = "direct"  # direct | reasoned | adaptive) Tj
+T*
+(reasoning_threshold: float = 0.7) Tj
+T*
+(```) Tj
+T*
+() Tj
+T*
+(Source: `backend/brain/specs/workflow_specs.py:70`) Tj
+T*
+() Tj
+T*
+(```python) Tj
+T*
+(# backend/brain/cortex/cortex.py) Tj
+T*
+(if strategy == "reasoned":) Tj
+T*
+(    return await self._create_reasoned_plan\(agent_specs, request\)) Tj
+T*
+(elif strategy == "adaptive":) Tj
+T*
+(    return await self._create_adaptive_plan\(agent_specs, request\)) Tj
+T*
+(```) Tj
+T*
+() Tj
+T*
+(Source: `backend/brain/cortex/cortex.py:244`) Tj
+T*
+() Tj
+T*
+(```python) Tj
+T*
+(# backend/brain/cortex/cortex.py) Tj
+T*
+(confidence = reasoning_result.get\("confidence", 0.0\)) Tj
+T*
+(threshold = agent_specs.processing.reasoning_threshold) Tj
+T*
+(if confidence >= threshold:) Tj
+T*
+(    return ExecutionPlan\(...optimized_specs=reasoning_result["optimized_specs"]...\)) Tj
+T*
+(else:) Tj
+T*
+(    return ExecutionPlan\(...optimized_specs=agent_specs...\)) Tj
+T*
+(```) Tj
+T*
+() Tj
+T*
+(Source: `backend/brain/cortex/cortex.py:307`) Tj
+T*
+() Tj
+T*
+(## Why this is production-friendly) Tj
+T*
+(- Explicit plan object with confidence/cost/latency \(`ExecutionPlan`\).) Tj
+T*
+(- Reasoning output validation before execution.) Tj
+T*
+(- Stable execution graph with retries and confidence thresholding.) Tj
+T*
+() Tj
+T*
+(```python) Tj
+T*
+(# backend/brain/cortex/workflow_engine.py) Tj
+T*
+(if confidence >= 0.75:) Tj
+T*
+(    state["is_validated"] = True) Tj
+T*
+(else:) Tj
+T*
+(    state["is_validated"] = False) Tj
+T*
+(```) Tj
+T*
+() Tj
+T*
+(Source: `backend/brain/cortex/workflow_engine.py:548`) Tj
+T*
+() Tj
+T*
+(## Production multi-agent use case) Tj
+T*
+(- **Best for**: regulated/high-safety systems where explainability and predictable stages) Tj
+T*
+(matter.) Tj
+T*
+(- **In ThinkLife**: planner agent chooses retrieval/provider/settings; domain agents) Tj
+T*
+(\(Zoe-like\) execute according to plan with guardrails.) Tj
+T*
+() Tj
+T*
+(---) Tj
+T*
+() Tj
+T*
+(## 4\) Pattern 3: Self-Ask) Tj
+ET
+endstream
+endobj
+7 0 obj
+<< /Type /Page /Parent 12 0 R /Resources << /Font << /F1 1 0 R >> >> /Contents 6 0 R >>
+endobj
+8 0 obj
+<< /Length 2128 >>
+stream
+BT
+/F1 11 Tf
+50 781 Td
+() Tj
+T*
+(## What it is) Tj
+T*
+(Self-Ask decomposes one user question into sub-questions, answers each sub-question) Tj
+T*
+(\(possibly with tools\), then synthesizes final answer.) Tj
+T*
+() Tj
+T*
+(## ThinkLife pieces that can support Self-Ask) Tj
+T*
+(- Iterative refinement hooks:) Tj
+T*
+() Tj
+T*
+(```python) Tj
+T*
+(# backend/brain/cortex/reasoning_engine.py) Tj
+T*
+(async def refine_plan\(...\):) Tj
+T*
+(    # continue / try different tools / conclude) Tj
+T*
+(```) Tj
+T*
+() Tj
+T*
+(Source: `backend/brain/cortex/reasoning_engine.py:98`) Tj
+T*
+() Tj
+T*
+(- Validation-driven retry loop:) Tj
+T*
+() Tj
+T*
+(```python) Tj
+T*
+(# backend/brain/cortex/workflow_engine.py) Tj
+T*
+(while True:) Tj
+T*
+(    state = await self._build_messages_node\(state\)) Tj
+T*
+(    state = await self._call_provider_node\(state\)) Tj
+T*
+(    state = await self._validate_response_node\(state\)) Tj
+T*
+(    route = self._route_after_validation\(state\)) Tj
+T*
+(    if route == "finalize":) Tj
+T*
+(        break) Tj
+T*
+(```) Tj
+T*
+() Tj
+T*
+(Source: `backend/brain/cortex/workflow_engine.py:241`) Tj
+T*
+() Tj
+T*
+(## Current gap) Tj
+T*
+(No explicit `subquestions[]` state in `WorkflowState` yet, and no dedicated ?decompose ->) Tj
+T*
+(solve -> synthesize? nodes.) Tj
+T*
+() Tj
+T*
+(## Production multi-agent use case) Tj
+T*
+(- **Best for**: complex advisory questions requiring decomposition \(e.g., ?Compare treatment) Tj
+T*
+(options, risks, and practical steps for my context?\).) Tj
+T*
+(- **In ThinkLife**: one ?Decomposer Agent? can create sub-questions, specialist agents) Tj
+T*
+(answer each, and a synthesis agent produces trauma-informed final output.) Tj
+T*
+() Tj
+T*
+(---) Tj
+T*
+() Tj
+T*
+(## 5\) LangChain/LangGraph usage in ThinkLife right now) Tj
+T*
+() Tj
+T*
+(ThinkLife uses LangChain primarily in retrieval/indexing and LangGraph for orchestration:) Tj
+T*
+() Tj
+T*
+(```python) Tj
+T*
+(# backend/brain/data_sources/vector_db.py) Tj
+T*
+(from langchain_chroma import Chroma) Tj
+T*
+(from langchain_openai import OpenAIEmbeddings) Tj
+T*
+(...) Tj
+T*
+(docs = self.vectorstore.similarity_search\(query, k=k, filter=filter_crit\)) Tj
+ET
+endstream
+endobj
+9 0 obj
+<< /Type /Page /Parent 12 0 R /Resources << /Font << /F1 1 0 R >> >> /Contents 8 0 R >>
+endobj
+10 0 obj
+<< /Length 1949 >>
+stream
+BT
+/F1 11 Tf
+50 781 Td
+(```) Tj
+T*
+() Tj
+T*
+(Source: `backend/brain/data_sources/vector_db.py:19`) Tj
+T*
+() Tj
+T*
+(```python) Tj
+T*
+(# backend/agents/zoe/utils/knowledge_index_builder.py) Tj
+T*
+(from langchain.schema import Document) Tj
+T*
+(from langchain_chroma import Chroma) Tj
+T*
+(from langchain_openai import OpenAIEmbeddings) Tj
+T*
+(...) Tj
+T*
+(Chroma.from_documents\(documents=all_docs, embedding=embeddings,) Tj
+T*
+(persist_directory=CHROMA_DB_DIR\)) Tj
+T*
+(```) Tj
+T*
+() Tj
+T*
+(Source: `backend/agents/zoe/utils/knowledge_index_builder.py:7`) Tj
+T*
+() Tj
+T*
+(```python) Tj
+T*
+(# backend/brain/cortex/workflow_engine.py) Tj
+T*
+(from langgraph.graph import StateGraph, END) Tj
+T*
+(workflow = StateGraph\(WorkflowState\)) Tj
+T*
+(```) Tj
+T*
+() Tj
+T*
+(Source: `backend/brain/cortex/workflow_engine.py:74`) Tj
+T*
+() Tj
+T*
+(---) Tj
+T*
+() Tj
+T*
+(## 6\) Practical recommendation for ThinkLife roadmap) Tj
+T*
+() Tj
+T*
+(1. Keep **Plan-and-Execute** as default for safety-critical flows \(already production-ready) Tj
+T*
+(shape\).) Tj
+T*
+(2. Add **ReAct mode** for research/ops agents by wiring real tool execution in) Tj
+T*
+(`_execute_tools_node`.) Tj
+T*
+(3. Add **Self-Ask mode** by extending `WorkflowState` with `subquestions`, adding nodes:) Tj
+T*
+(   - `decompose_question`) Tj
+T*
+(   - `answer_subquestion`) Tj
+T*
+(   - `synthesize_answer`) Tj
+T*
+(4. Use `adaptive` planning strategy as default in new agents to combine speed + robustness.) Tj
+T*
+() Tj
+T*
+(---) Tj
+T*
+() Tj
+T*
+(## 7\) Important code-level observation) Tj
+T*
+() Tj
+T*
+(Zoe currently sets:) Tj
+T*
+() Tj
+T*
+(```python) Tj
+T*
+(processing=ProcessingSpec\(... execution_strategy="direct", eval=True\)) Tj
+T*
+(```) Tj
+T*
+() Tj
+T*
+(Source: `backend/plugins/zoe_agent.py:106`) Tj
+T*
+() Tj
+T*
+(So Zoe bypasses reasoning optimization today. For pilot rollout of advanced orchestration,) Tj
+T*
+(switch selected agent/plugin configs to `execution_strategy="adaptive"` first.) Tj
+T*
+() Tj
+ET
+endstream
+endobj
+11 0 obj
+<< /Type /Page /Parent 12 0 R /Resources << /Font << /F1 1 0 R >> >> /Contents 10 0 R >>
+endobj
+12 0 obj
+<< /Type /Pages /Kids [ 3 0 R 5 0 R 7 0 R 9 0 R 11 0 R ] /Count 5 /MediaBox [0 0 595 842] >>
+endobj
+13 0 obj
+<< /Type /Catalog /Pages 12 0 R >>
+endobj
+xref
+0 14
+0000000000 65535 f 
+0000000009 00000 n 
+0000000079 00000 n 
+0000002378 00000 n 
+0000002481 00000 n 
+0000004455 00000 n 
+0000004558 00000 n 
+0000006664 00000 n 
+0000006767 00000 n 
+0000008946 00000 n 
+0000009049 00000 n 
+0000011050 00000 n 
+0000011155 00000 n 
+0000011264 00000 n 
+trailer
+<< /Size 14 /Root 13 0 R >>
+startxref
+11315
+%%EOF

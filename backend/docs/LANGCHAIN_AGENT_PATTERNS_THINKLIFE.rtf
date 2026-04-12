@@ -1,0 +1,257 @@
+{\rtf1\ansi\ansicpg1252\cocoartf2867
+\cocoatextscaling0\cocoaplatform0{\fonttbl\f0\fswiss\fcharset0 Helvetica-Light;}
+{\colortbl;\red255\green255\blue255;}
+{\*\expandedcolortbl;;}
+\pard\tx560\tx1120\tx1680\tx2240\tx2800\tx3360\tx3920\tx4480\tx5040\tx5600\tx6160\tx6720\pardirnatural\partightenfactor0
+
+\f0\fs24 \cf0 # ThinkLife: LangChain/LangGraph Agent Pattern Prototype and Orchestration\
+\
+## 1) What ThinkLife already has (baseline)\
+\
+ThinkLife already implements a strong **plan-then-execute orchestration** using `CortexFlow` + `WorkflowEngine` (LangGraph state machine) + plugin agents.\
+\
+### Core flow in code\
+\
+```python\
+# backend/brain/cortex/cortex.py\
+strategy = agent_specs.processing.execution_strategy if agent_specs.processing else "direct"\
+\
+if strategy in ["reasoned", "adaptive"]:\
+    plan = await self.create_execution_plan(agent_specs, request)\
+    validation = self._validate_reasoning_output(plan, request)\
+    result = await self.execute_plan(plan, request)\
+else:\
+    plan = ExecutionPlan(...)\
+    result = await self.execute_agent_request(plan, request)\
+```\
+\
+Source: `backend/brain/cortex/cortex.py:189`\
+\
+```python\
+# backend/brain/cortex/workflow_engine.py\
+workflow.add_node("initialize", self._initialize_node)\
+workflow.add_node("query_data_sources", self._query_data_sources_node)\
+workflow.add_node("execute_tools", self._execute_tools_node)\
+workflow.add_node("build_messages", self._build_messages_node)\
+workflow.add_node("call_provider", self._call_provider_node)\
+workflow.add_node("validate_response", self._validate_response_node)\
+workflow.add_node("finalize", self._finalize_node)\
+```\
+\
+Source: `backend/brain/cortex/workflow_engine.py:79`\
+\
+This means ThinkLife is closest today to **Plan-and-Execute** (with validation/retry loop), not a full ReAct or Self-Ask implementation yet.\
+\
+---\
+\
+## 2) Pattern 1: ReAct (Reason + Act)\
+\
+## What it is\
+ReAct alternates between:\
+1. reasoning about next action,\
+2. executing a tool/data action,\
+3. observing result,\
+4. repeating until final answer.\
+\
+## What ThinkLife already has for ReAct\
+ThinkLife has reusable pieces:\
+\
+```python\
+# backend/brain/cortex/reasoning_engine.py\
+async def decide_next_step(...):\
+    ...\
+    return self._parse_decision(response.get("content", ""))\
+```\
+\
+Source: `backend/brain/cortex/reasoning_engine.py:35`\
+\
+```python\
+def _parse_decision(self, llm_response: str) -> Dict[str, Any]:\
+    if "tool" in resp: return \{"action": "use_tool", ...\}\
+    if "data" in resp or "search" in resp: return \{"action": "query_data", ...\}\
+    if "complete" in resp or "done" in resp: return \{"action": "complete", ...\}\
+```\
+\
+Source: `backend/brain/cortex/reasoning_engine.py:145`\
+\
+## Current gap\
+`WorkflowEngine` tool execution is currently placeholder:\
+\
+```python\
+# backend/brain/cortex/workflow_engine.py\
+results.append(\{\
+    "tool": tool.name,\
+    "status": "executed",\
+    "result": "Tool execution placeholder"\
+\})\
+```\
+\
+Source: `backend/brain/cortex/workflow_engine.py:342`\
+\
+So ReAct is not yet fully closed-loop in production.\
+\
+## Production multi-agent use case\
+- **Best for**: dynamic retrieval/search-heavy tasks where agent must iteratively decide next step (research, support triage, incident investigation).\
+- **In ThinkLife**: a \'93Research Agent\'94 could repeatedly query Tavily + vector DB until confidence is acceptable, then handoff final result to a \'93Care Response Agent.\'94\
+\
+---\
+\
+## 3) Pattern 2: Plan-and-Execute\
+\
+## What it is\
+Two-phase architecture:\
+1. create plan,\
+2. execute plan deterministically.\
+\
+## ThinkLife implementation (already strong)\
+\
+```python\
+# backend/brain/specs/workflow_specs.py\
+execution_strategy: str = "direct"  # direct | reasoned | adaptive\
+reasoning_threshold: float = 0.7\
+```\
+\
+Source: `backend/brain/specs/workflow_specs.py:70`\
+\
+```python\
+# backend/brain/cortex/cortex.py\
+if strategy == "reasoned":\
+    return await self._create_reasoned_plan(agent_specs, request)\
+elif strategy == "adaptive":\
+    return await self._create_adaptive_plan(agent_specs, request)\
+```\
+\
+Source: `backend/brain/cortex/cortex.py:244`\
+\
+```python\
+# backend/brain/cortex/cortex.py\
+confidence = reasoning_result.get("confidence", 0.0)\
+threshold = agent_specs.processing.reasoning_threshold\
+if confidence >= threshold:\
+    return ExecutionPlan(...optimized_specs=reasoning_result["optimized_specs"]...)\
+else:\
+    return ExecutionPlan(...optimized_specs=agent_specs...)\
+```\
+\
+Source: `backend/brain/cortex/cortex.py:307`\
+\
+## Why this is production-friendly\
+- Explicit plan object with confidence/cost/latency (`ExecutionPlan`).\
+- Reasoning output validation before execution.\
+- Stable execution graph with retries and confidence thresholding.\
+\
+```python\
+# backend/brain/cortex/workflow_engine.py\
+if confidence >= 0.75:\
+    state["is_validated"] = True\
+else:\
+    state["is_validated"] = False\
+```\
+\
+Source: `backend/brain/cortex/workflow_engine.py:548`\
+\
+## Production multi-agent use case\
+- **Best for**: regulated/high-safety systems where explainability and predictable stages matter.\
+- **In ThinkLife**: planner agent chooses retrieval/provider/settings; domain agents (Zoe-like) execute according to plan with guardrails.\
+\
+---\
+\
+## 4) Pattern 3: Self-Ask\
+\
+## What it is\
+Self-Ask decomposes one user question into sub-questions, answers each sub-question (possibly with tools), then synthesizes final answer.\
+\
+## ThinkLife pieces that can support Self-Ask\
+- Iterative refinement hooks:\
+\
+```python\
+# backend/brain/cortex/reasoning_engine.py\
+async def refine_plan(...):\
+    # continue / try different tools / conclude\
+```\
+\
+Source: `backend/brain/cortex/reasoning_engine.py:98`\
+\
+- Validation-driven retry loop:\
+\
+```python\
+# backend/brain/cortex/workflow_engine.py\
+while True:\
+    state = await self._build_messages_node(state)\
+    state = await self._call_provider_node(state)\
+    state = await self._validate_response_node(state)\
+    route = self._route_after_validation(state)\
+    if route == "finalize":\
+        break\
+```\
+\
+Source: `backend/brain/cortex/workflow_engine.py:241`\
+\
+## Current gap\
+No explicit `subquestions[]` state in `WorkflowState` yet, and no dedicated \'93decompose -> solve -> synthesize\'94 nodes.\
+\
+## Production multi-agent use case\
+- **Best for**: complex advisory questions requiring decomposition (e.g., \'93Compare treatment options, risks, and practical steps for my context\'94).\
+- **In ThinkLife**: one \'93Decomposer Agent\'94 can create sub-questions, specialist agents answer each, and a synthesis agent produces trauma-informed final output.\
+\
+---\
+\
+## 5) LangChain/LangGraph usage in ThinkLife right now\
+\
+ThinkLife uses LangChain primarily in retrieval/indexing and LangGraph for orchestration:\
+\
+```python\
+# backend/brain/data_sources/vector_db.py\
+from langchain_chroma import Chroma\
+from langchain_openai import OpenAIEmbeddings\
+...\
+docs = self.vectorstore.similarity_search(query, k=k, filter=filter_crit)\
+```\
+\
+Source: `backend/brain/data_sources/vector_db.py:19`\
+\
+```python\
+# backend/agents/zoe/utils/knowledge_index_builder.py\
+from langchain.schema import Document\
+from langchain_chroma import Chroma\
+from langchain_openai import OpenAIEmbeddings\
+...\
+Chroma.from_documents(documents=all_docs, embedding=embeddings, persist_directory=CHROMA_DB_DIR)\
+```\
+\
+Source: `backend/agents/zoe/utils/knowledge_index_builder.py:7`\
+\
+```python\
+# backend/brain/cortex/workflow_engine.py\
+from langgraph.graph import StateGraph, END\
+workflow = StateGraph(WorkflowState)\
+```\
+\
+Source: `backend/brain/cortex/workflow_engine.py:74`\
+\
+---\
+\
+## 6) Practical recommendation for ThinkLife roadmap\
+\
+1. Keep **Plan-and-Execute** as default for safety-critical flows (already production-ready shape).\
+2. Add **ReAct mode** for research/ops agents by wiring real tool execution in `_execute_tools_node`.\
+3. Add **Self-Ask mode** by extending `WorkflowState` with `subquestions`, adding nodes:\
+   - `decompose_question`\
+   - `answer_subquestion`\
+   - `synthesize_answer`\
+4. Use `adaptive` planning strategy as default in new agents to combine speed + robustness.\
+\
+---\
+\
+## 7) Important code-level observation\
+\
+Zoe currently sets:\
+\
+```python\
+processing=ProcessingSpec(... execution_strategy="direct", eval=True)\
+```\
+\
+Source: `backend/plugins/zoe_agent.py:106`\
+\
+So Zoe bypasses reasoning optimization today. For pilot rollout of advanced orchestration, switch selected agent/plugin configs to `execution_strategy="adaptive"` first.\
+}

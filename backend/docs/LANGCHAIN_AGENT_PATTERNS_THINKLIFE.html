@@ -1,0 +1,266 @@
+<!DOCTYPE html PUBLIC "-//W3C//DTD HTML 4.01//EN" "http://www.w3.org/TR/html4/strict.dtd">
+<html>
+<head>
+  <meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+  <meta http-equiv="Content-Style-Type" content="text/css">
+  <title></title>
+  <meta name="Generator" content="Cocoa HTML Writer">
+  <meta name="CocoaVersion" content="2685.3">
+  <style type="text/css">
+    p.p1 {margin: 0.0px 0.0px 0.0px 0.0px; font: 12.0px 'Helvetica Light'}
+    p.p2 {margin: 0.0px 0.0px 0.0px 0.0px; font: 12.0px 'Helvetica Light'; min-height: 14.0px}
+  </style>
+</head>
+<body>
+<p class="p1"># ThinkLife: LangChain/LangGraph Agent Pattern Prototype and Orchestration</p>
+<p class="p2"><br></p>
+<p class="p1">## 1) What ThinkLife already has (baseline)</p>
+<p class="p2"><br></p>
+<p class="p1">ThinkLife already implements a strong **plan-then-execute orchestration** using `CortexFlow` + `WorkflowEngine` (LangGraph state machine) + plugin agents.</p>
+<p class="p2"><br></p>
+<p class="p1">### Core flow in code</p>
+<p class="p2"><br></p>
+<p class="p1">```python</p>
+<p class="p1"># backend/brain/cortex/cortex.py</p>
+<p class="p1">strategy = agent_specs.processing.execution_strategy if agent_specs.processing else "direct"</p>
+<p class="p2"><br></p>
+<p class="p1">if strategy in ["reasoned", "adaptive"]:</p>
+<p class="p1"><span class="Apple-converted-space">    </span>plan = await self.create_execution_plan(agent_specs, request)</p>
+<p class="p1"><span class="Apple-converted-space">    </span>validation = self._validate_reasoning_output(plan, request)</p>
+<p class="p1"><span class="Apple-converted-space">    </span>result = await self.execute_plan(plan, request)</p>
+<p class="p1">else:</p>
+<p class="p1"><span class="Apple-converted-space">    </span>plan = ExecutionPlan(...)</p>
+<p class="p1"><span class="Apple-converted-space">    </span>result = await self.execute_agent_request(plan, request)</p>
+<p class="p1">```</p>
+<p class="p2"><br></p>
+<p class="p1">Source: `backend/brain/cortex/cortex.py:189`</p>
+<p class="p2"><br></p>
+<p class="p1">```python</p>
+<p class="p1"># backend/brain/cortex/workflow_engine.py</p>
+<p class="p1">workflow.add_node("initialize", self._initialize_node)</p>
+<p class="p1">workflow.add_node("query_data_sources", self._query_data_sources_node)</p>
+<p class="p1">workflow.add_node("execute_tools", self._execute_tools_node)</p>
+<p class="p1">workflow.add_node("build_messages", self._build_messages_node)</p>
+<p class="p1">workflow.add_node("call_provider", self._call_provider_node)</p>
+<p class="p1">workflow.add_node("validate_response", self._validate_response_node)</p>
+<p class="p1">workflow.add_node("finalize", self._finalize_node)</p>
+<p class="p1">```</p>
+<p class="p2"><br></p>
+<p class="p1">Source: `backend/brain/cortex/workflow_engine.py:79`</p>
+<p class="p2"><br></p>
+<p class="p1">This means ThinkLife is closest today to **Plan-and-Execute** (with validation/retry loop), not a full ReAct or Self-Ask implementation yet.</p>
+<p class="p2"><br></p>
+<p class="p1">---</p>
+<p class="p2"><br></p>
+<p class="p1">## 2) Pattern 1: ReAct (Reason + Act)</p>
+<p class="p2"><br></p>
+<p class="p1">## What it is</p>
+<p class="p1">ReAct alternates between:</p>
+<p class="p1">1. reasoning about next action,</p>
+<p class="p1">2. executing a tool/data action,</p>
+<p class="p1">3. observing result,</p>
+<p class="p1">4. repeating until final answer.</p>
+<p class="p2"><br></p>
+<p class="p1">## What ThinkLife already has for ReAct</p>
+<p class="p1">ThinkLife has reusable pieces:</p>
+<p class="p2"><br></p>
+<p class="p1">```python</p>
+<p class="p1"># backend/brain/cortex/reasoning_engine.py</p>
+<p class="p1">async def decide_next_step(...):</p>
+<p class="p1"><span class="Apple-converted-space">    </span>...</p>
+<p class="p1"><span class="Apple-converted-space">    </span>return self._parse_decision(response.get("content", ""))</p>
+<p class="p1">```</p>
+<p class="p2"><br></p>
+<p class="p1">Source: `backend/brain/cortex/reasoning_engine.py:35`</p>
+<p class="p2"><br></p>
+<p class="p1">```python</p>
+<p class="p1">def _parse_decision(self, llm_response: str) -&gt; Dict[str, Any]:</p>
+<p class="p1"><span class="Apple-converted-space">    </span>if "tool" in resp: return {"action": "use_tool", ...}</p>
+<p class="p1"><span class="Apple-converted-space">    </span>if "data" in resp or "search" in resp: return {"action": "query_data", ...}</p>
+<p class="p1"><span class="Apple-converted-space">    </span>if "complete" in resp or "done" in resp: return {"action": "complete", ...}</p>
+<p class="p1">```</p>
+<p class="p2"><br></p>
+<p class="p1">Source: `backend/brain/cortex/reasoning_engine.py:145`</p>
+<p class="p2"><br></p>
+<p class="p1">## Current gap</p>
+<p class="p1">`WorkflowEngine` tool execution is currently placeholder:</p>
+<p class="p2"><br></p>
+<p class="p1">```python</p>
+<p class="p1"># backend/brain/cortex/workflow_engine.py</p>
+<p class="p1">results.append({</p>
+<p class="p1"><span class="Apple-converted-space">    </span>"tool": tool.name,</p>
+<p class="p1"><span class="Apple-converted-space">    </span>"status": "executed",</p>
+<p class="p1"><span class="Apple-converted-space">    </span>"result": "Tool execution placeholder"</p>
+<p class="p1">})</p>
+<p class="p1">```</p>
+<p class="p2"><br></p>
+<p class="p1">Source: `backend/brain/cortex/workflow_engine.py:342`</p>
+<p class="p2"><br></p>
+<p class="p1">So ReAct is not yet fully closed-loop in production.</p>
+<p class="p2"><br></p>
+<p class="p1">## Production multi-agent use case</p>
+<p class="p1">- **Best for**: dynamic retrieval/search-heavy tasks where agent must iteratively decide next step (research, support triage, incident investigation).</p>
+<p class="p1">- **In ThinkLife**: a “Research Agent” could repeatedly query Tavily + vector DB until confidence is acceptable, then handoff final result to a “Care Response Agent.”</p>
+<p class="p2"><br></p>
+<p class="p1">---</p>
+<p class="p2"><br></p>
+<p class="p1">## 3) Pattern 2: Plan-and-Execute</p>
+<p class="p2"><br></p>
+<p class="p1">## What it is</p>
+<p class="p1">Two-phase architecture:</p>
+<p class="p1">1. create plan,</p>
+<p class="p1">2. execute plan deterministically.</p>
+<p class="p2"><br></p>
+<p class="p1">## ThinkLife implementation (already strong)</p>
+<p class="p2"><br></p>
+<p class="p1">```python</p>
+<p class="p1"># backend/brain/specs/workflow_specs.py</p>
+<p class="p1">execution_strategy: str = "direct"<span class="Apple-converted-space">  </span># direct | reasoned | adaptive</p>
+<p class="p1">reasoning_threshold: float = 0.7</p>
+<p class="p1">```</p>
+<p class="p2"><br></p>
+<p class="p1">Source: `backend/brain/specs/workflow_specs.py:70`</p>
+<p class="p2"><br></p>
+<p class="p1">```python</p>
+<p class="p1"># backend/brain/cortex/cortex.py</p>
+<p class="p1">if strategy == "reasoned":</p>
+<p class="p1"><span class="Apple-converted-space">    </span>return await self._create_reasoned_plan(agent_specs, request)</p>
+<p class="p1">elif strategy == "adaptive":</p>
+<p class="p1"><span class="Apple-converted-space">    </span>return await self._create_adaptive_plan(agent_specs, request)</p>
+<p class="p1">```</p>
+<p class="p2"><br></p>
+<p class="p1">Source: `backend/brain/cortex/cortex.py:244`</p>
+<p class="p2"><br></p>
+<p class="p1">```python</p>
+<p class="p1"># backend/brain/cortex/cortex.py</p>
+<p class="p1">confidence = reasoning_result.get("confidence", 0.0)</p>
+<p class="p1">threshold = agent_specs.processing.reasoning_threshold</p>
+<p class="p1">if confidence &gt;= threshold:</p>
+<p class="p1"><span class="Apple-converted-space">    </span>return ExecutionPlan(...optimized_specs=reasoning_result["optimized_specs"]...)</p>
+<p class="p1">else:</p>
+<p class="p1"><span class="Apple-converted-space">    </span>return ExecutionPlan(...optimized_specs=agent_specs...)</p>
+<p class="p1">```</p>
+<p class="p2"><br></p>
+<p class="p1">Source: `backend/brain/cortex/cortex.py:307`</p>
+<p class="p2"><br></p>
+<p class="p1">## Why this is production-friendly</p>
+<p class="p1">- Explicit plan object with confidence/cost/latency (`ExecutionPlan`).</p>
+<p class="p1">- Reasoning output validation before execution.</p>
+<p class="p1">- Stable execution graph with retries and confidence thresholding.</p>
+<p class="p2"><br></p>
+<p class="p1">```python</p>
+<p class="p1"># backend/brain/cortex/workflow_engine.py</p>
+<p class="p1">if confidence &gt;= 0.75:</p>
+<p class="p1"><span class="Apple-converted-space">    </span>state["is_validated"] = True</p>
+<p class="p1">else:</p>
+<p class="p1"><span class="Apple-converted-space">    </span>state["is_validated"] = False</p>
+<p class="p1">```</p>
+<p class="p2"><br></p>
+<p class="p1">Source: `backend/brain/cortex/workflow_engine.py:548`</p>
+<p class="p2"><br></p>
+<p class="p1">## Production multi-agent use case</p>
+<p class="p1">- **Best for**: regulated/high-safety systems where explainability and predictable stages matter.</p>
+<p class="p1">- **In ThinkLife**: planner agent chooses retrieval/provider/settings; domain agents (Zoe-like) execute according to plan with guardrails.</p>
+<p class="p2"><br></p>
+<p class="p1">---</p>
+<p class="p2"><br></p>
+<p class="p1">## 4) Pattern 3: Self-Ask</p>
+<p class="p2"><br></p>
+<p class="p1">## What it is</p>
+<p class="p1">Self-Ask decomposes one user question into sub-questions, answers each sub-question (possibly with tools), then synthesizes final answer.</p>
+<p class="p2"><br></p>
+<p class="p1">## ThinkLife pieces that can support Self-Ask</p>
+<p class="p1">- Iterative refinement hooks:</p>
+<p class="p2"><br></p>
+<p class="p1">```python</p>
+<p class="p1"># backend/brain/cortex/reasoning_engine.py</p>
+<p class="p1">async def refine_plan(...):</p>
+<p class="p1"><span class="Apple-converted-space">    </span># continue / try different tools / conclude</p>
+<p class="p1">```</p>
+<p class="p2"><br></p>
+<p class="p1">Source: `backend/brain/cortex/reasoning_engine.py:98`</p>
+<p class="p2"><br></p>
+<p class="p1">- Validation-driven retry loop:</p>
+<p class="p2"><br></p>
+<p class="p1">```python</p>
+<p class="p1"># backend/brain/cortex/workflow_engine.py</p>
+<p class="p1">while True:</p>
+<p class="p1"><span class="Apple-converted-space">    </span>state = await self._build_messages_node(state)</p>
+<p class="p1"><span class="Apple-converted-space">    </span>state = await self._call_provider_node(state)</p>
+<p class="p1"><span class="Apple-converted-space">    </span>state = await self._validate_response_node(state)</p>
+<p class="p1"><span class="Apple-converted-space">    </span>route = self._route_after_validation(state)</p>
+<p class="p1"><span class="Apple-converted-space">    </span>if route == "finalize":</p>
+<p class="p1"><span class="Apple-converted-space">        </span>break</p>
+<p class="p1">```</p>
+<p class="p2"><br></p>
+<p class="p1">Source: `backend/brain/cortex/workflow_engine.py:241`</p>
+<p class="p2"><br></p>
+<p class="p1">## Current gap</p>
+<p class="p1">No explicit `subquestions[]` state in `WorkflowState` yet, and no dedicated “decompose -&gt; solve -&gt; synthesize” nodes.</p>
+<p class="p2"><br></p>
+<p class="p1">## Production multi-agent use case</p>
+<p class="p1">- **Best for**: complex advisory questions requiring decomposition (e.g., “Compare treatment options, risks, and practical steps for my context”).</p>
+<p class="p1">- **In ThinkLife**: one “Decomposer Agent” can create sub-questions, specialist agents answer each, and a synthesis agent produces trauma-informed final output.</p>
+<p class="p2"><br></p>
+<p class="p1">---</p>
+<p class="p2"><br></p>
+<p class="p1">## 5) LangChain/LangGraph usage in ThinkLife right now</p>
+<p class="p2"><br></p>
+<p class="p1">ThinkLife uses LangChain primarily in retrieval/indexing and LangGraph for orchestration:</p>
+<p class="p2"><br></p>
+<p class="p1">```python</p>
+<p class="p1"># backend/brain/data_sources/vector_db.py</p>
+<p class="p1">from langchain_chroma import Chroma</p>
+<p class="p1">from langchain_openai import OpenAIEmbeddings</p>
+<p class="p1">...</p>
+<p class="p1">docs = self.vectorstore.similarity_search(query, k=k, filter=filter_crit)</p>
+<p class="p1">```</p>
+<p class="p2"><br></p>
+<p class="p1">Source: `backend/brain/data_sources/vector_db.py:19`</p>
+<p class="p2"><br></p>
+<p class="p1">```python</p>
+<p class="p1"># backend/agents/zoe/utils/knowledge_index_builder.py</p>
+<p class="p1">from langchain.schema import Document</p>
+<p class="p1">from langchain_chroma import Chroma</p>
+<p class="p1">from langchain_openai import OpenAIEmbeddings</p>
+<p class="p1">...</p>
+<p class="p1">Chroma.from_documents(documents=all_docs, embedding=embeddings, persist_directory=CHROMA_DB_DIR)</p>
+<p class="p1">```</p>
+<p class="p2"><br></p>
+<p class="p1">Source: `backend/agents/zoe/utils/knowledge_index_builder.py:7`</p>
+<p class="p2"><br></p>
+<p class="p1">```python</p>
+<p class="p1"># backend/brain/cortex/workflow_engine.py</p>
+<p class="p1">from langgraph.graph import StateGraph, END</p>
+<p class="p1">workflow = StateGraph(WorkflowState)</p>
+<p class="p1">```</p>
+<p class="p2"><br></p>
+<p class="p1">Source: `backend/brain/cortex/workflow_engine.py:74`</p>
+<p class="p2"><br></p>
+<p class="p1">---</p>
+<p class="p2"><br></p>
+<p class="p1">## 6) Practical recommendation for ThinkLife roadmap</p>
+<p class="p2"><br></p>
+<p class="p1">1. Keep **Plan-and-Execute** as default for safety-critical flows (already production-ready shape).</p>
+<p class="p1">2. Add **ReAct mode** for research/ops agents by wiring real tool execution in `_execute_tools_node`.</p>
+<p class="p1">3. Add **Self-Ask mode** by extending `WorkflowState` with `subquestions`, adding nodes:</p>
+<p class="p1"><span class="Apple-converted-space">   </span>- `decompose_question`</p>
+<p class="p1"><span class="Apple-converted-space">   </span>- `answer_subquestion`</p>
+<p class="p1"><span class="Apple-converted-space">   </span>- `synthesize_answer`</p>
+<p class="p1">4. Use `adaptive` planning strategy as default in new agents to combine speed + robustness.</p>
+<p class="p2"><br></p>
+<p class="p1">---</p>
+<p class="p2"><br></p>
+<p class="p1">## 7) Important code-level observation</p>
+<p class="p2"><br></p>
+<p class="p1">Zoe currently sets:</p>
+<p class="p2"><br></p>
+<p class="p1">```python</p>
+<p class="p1">processing=ProcessingSpec(... execution_strategy="direct", eval=True)</p>
+<p class="p1">```</p>
+<p class="p2"><br></p>
+<p class="p1">Source: `backend/plugins/zoe_agent.py:106`</p>
+<p class="p2"><br></p>
+<p class="p1">So Zoe bypasses reasoning optimization today. For pilot rollout of advanced orchestration, switch selected agent/plugin configs to `execution_strategy="adaptive"` first.</p>
+</body>
+</html>
